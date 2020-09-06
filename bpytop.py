@@ -56,12 +56,12 @@ if errors:
 		print("\nInstall required modules!\n")
 	raise SystemExit(1)
 
-VERSION: str = "1.0.22"
+VERSION: str = "1.0.24"
 
 #? Argument parser ------------------------------------------------------------------------------->
 if len(sys.argv) > 1:
 	for arg in sys.argv[1:]:
-		if not arg in ["-m", "--mini", "-v", "--version", "-h", "--help", "--debug"]:
+		if not arg in ["-m", "--mini", "-v", "--version", "-h", "--help", "--debug", "-f", "-p", "-s", "--full", "--proc", "--stat"]:
 			print(f'Unrecognized argument: {arg}\n'
 				f'Use argument -h or --help for help')
 			raise SystemExit(1)
@@ -69,7 +69,9 @@ if len(sys.argv) > 1:
 if "-h" in sys.argv or "--help" in sys.argv:
 	print(f'USAGE: {sys.argv[0]} [argument]\n\n'
 		f'Arguments:\n'
-		f'    -m, --mini            Start in minimal mode without memory and net boxes\n'
+		f'    -f, --full            Start in full mode showing all boxes [default]\n'
+		f'    -p, --proc            Start in minimal mode without memory and net boxes\n'
+		f'    -s, --stat            Start in minimal mode without process box\n'
 		f'    -v, --version         Show version info and exit\n'
 		f'    -h, --help            Show this help message and exit\n'
 		f'    --debug               Start with loglevel set to DEBUG overriding value set in config\n'
@@ -79,6 +81,14 @@ elif "-v" in sys.argv or "--version" in sys.argv:
 	print(f'bpytop version: {VERSION}\n'
 		f'psutil version: {".".join(str(x) for x in psutil.version_info)}')
 	raise SystemExit(0)
+
+ARG_MODE: str = ""
+if "-f" in sys.argv or "--full" in sys.argv:
+	ARG_MODE = "full"
+elif "-p" in sys.argv or "--proc" in sys.argv:
+	ARG_MODE = "proc"
+elif "-s" in sys.argv or "--stat" in sys.argv:
+	ARG_MODE = "stat"
 
 
 #? Variables ------------------------------------------------------------------------------------->
@@ -101,6 +111,9 @@ color_theme="$color_theme"
 
 #* If the theme set background should be shown, set to False if you want terminal background transparency
 theme_background=$theme_background
+
+#* Set bpytop view mode, "full" for everything shown, "proc" for cpu stats and processes, "stat" for cpu, mem, disks and net stats shown.
+view_mode=$view_mode
 
 #* Update time in milliseconds, increases automatically if set below internal loops processing time, recommended 2000 ms or above for better sample times for graphs.
 update_ms=$update_ms
@@ -162,6 +175,9 @@ net_upload="$net_upload"
 #* Start in network graphs auto rescaling mode, ignores any values set above and rescales down to 10 Kibibytes at the lowest.
 net_auto=$net_auto
 
+#* Sync the scaling for download and upload to whichever currently has the highest scale
+net_sync=$net_sync
+
 #* If the network graphs color gradient should scale to bandwith usage or auto scale, bandwith usage is based on "net_download" and "net_upload" values
 net_color_fixed=$net_color_fixed
 
@@ -170,9 +186,6 @@ show_init=$show_init
 
 #* Enable check for new version from github.com/aristocratos/bpytop at start.
 update_check=$update_check
-
-#* Enable start in mini mode, can be toggled with shift+m at any time.
-mini_mode=$mini_mode
 
 #* Set loglevel for "~/.config/bpytop/error.log" levels are: "ERROR" "WARNING" "INFO" "DEBUG".
 #* The level set includes all lower levels, i.e. "DEBUG" will show all logging info.
@@ -347,8 +360,9 @@ def timeit_decorator(func):
 
 class Config:
 	'''Holds all config variables and functions for loading from and saving to disk'''
-	keys: List[str] = ["color_theme", "update_ms", "proc_sorting", "proc_reversed", "proc_tree", "check_temp", "draw_clock", "background_update", "custom_cpu_name", "proc_colors", "proc_gradient", "proc_per_core", "proc_mem_bytes",
-						"disks_filter", "update_check", "log_level", "mem_graphs", "show_swap", "swap_disk", "show_disks", "net_download", "net_upload", "net_auto", "net_color_fixed", "show_init", "mini_mode", "theme_background"]
+	keys: List[str] = ["color_theme", "update_ms", "proc_sorting", "proc_reversed", "proc_tree", "check_temp", "draw_clock", "background_update", "custom_cpu_name",
+						"proc_colors", "proc_gradient", "proc_per_core", "proc_mem_bytes", "disks_filter", "update_check", "log_level", "mem_graphs", "show_swap",
+						"swap_disk", "show_disks", "net_download", "net_upload", "net_auto", "net_color_fixed", "show_init", "view_mode", "theme_background", "net_sync"]
 	conf_dict: Dict[str, Union[str, int, bool]] = {}
 	color_theme: str = "Default"
 	theme_background: bool = True
@@ -374,8 +388,9 @@ class Config:
 	net_upload: str = "10M"
 	net_color_fixed: bool = False
 	net_auto: bool = True
+	net_sync: bool = False
 	show_init: bool = True
-	mini_mode: bool = False
+	view_mode: str = "full"
 	log_level: str = "WARNING"
 
 	warnings: List[str] = []
@@ -383,6 +398,8 @@ class Config:
 
 	sorting_options: List[str] = ["pid", "program", "arguments", "threads", "user", "memory", "cpu lazy", "cpu responsive"]
 	log_levels: List[str] = ["ERROR", "WARNING", "INFO", "DEBUG"]
+
+	view_modes: List[str] = ["full", "proc", "stat"]
 
 	changed: bool = False
 	recreate: bool = False
@@ -455,6 +472,9 @@ class Config:
 		if "log_level" in new_config and not new_config["log_level"] in self.log_levels:
 			new_config["log_level"] = "_error_"
 			self.warnings.append(f'Config key "log_level" didn\'t get an acceptable value!')
+		if "view_mode" in new_config and not new_config["view_mode"] in self.view_modes:
+			new_config["view_mode"] = "_error_"
+			self.warnings.append(f'Config key "view_mode" didn\'t get an acceptable value!')
 		if isinstance(new_config["update_ms"], int) and new_config["update_ms"] < 100:
 			new_config["update_ms"] = 100
 			self.warnings.append(f'Config key "update_ms" can\'t be lower than 100!')
@@ -1458,7 +1478,8 @@ class Box:
 	y: int
 	width: int
 	height: int
-	mini_mode: bool = True if CONFIG.mini_mode or "-m" in sys.argv or "--mini" in sys.argv else False
+	proc_mode: bool = True if (CONFIG.view_mode == "proc" and not ARG_MODE) or ARG_MODE == "proc" else False
+	stat_mode: bool = True if (CONFIG.view_mode == "stat" and not ARG_MODE) or ARG_MODE == "stat" else False
 	out: str
 	bg: str
 	_b_cpu_h: int
@@ -1479,7 +1500,7 @@ class Box:
 	@classmethod
 	def draw_update_ms(cls, now: bool = True):
 		update_string: str = f'{CONFIG.update_ms}ms'
-		xpos: int = CpuBox.x + CpuBox.width - len(update_string) - 14
+		xpos: int = CpuBox.x + CpuBox.width - len(update_string) - 15
 		if not "+" in Key.mouse:
 			Key.mouse["+"] = [[xpos + 7 + i, CpuBox.y] for i in range(3)]
 			Key.mouse["-"] = [[CpuBox.x + CpuBox.width - 4 + i, CpuBox.y] for i in range(3)]
@@ -1530,7 +1551,7 @@ class CpuBox(Box, SubBox):
 	def _calc_size(cls):
 		cpu = CpuCollector
 		height_p: int
-		if cls.mini_mode: height_p = 20
+		if cls.proc_mode: height_p = 20
 		else: height_p = cls.height_p
 		cls.width = round(Term.width * cls.width_p / 100)
 		cls.height = round(Term.height * height_p / 100)
@@ -1578,8 +1599,8 @@ class CpuBox(Box, SubBox):
 
 		if cls.resized or cls.redraw:
 			if not "m" in Key.mouse:
-				Key.mouse["m"] = [[cls.x + 16 + i, cls.y] for i in range(6)]
-			out_misc += f'{Mv.to(cls.y, cls.x + 16)}{THEME.cpu_box(Symbol.title_left)}{Fx.b if Box.mini_mode else ""}{THEME.hi_fg("m")}{THEME.title("ini")}{Fx.ub}{THEME.cpu_box(Symbol.title_right)}'
+				Key.mouse["m"] = [[cls.x + 16 + i, cls.y] for i in range(12)]
+			out_misc += f'{Mv.to(cls.y, cls.x + 16)}{THEME.cpu_box(Symbol.title_left)}{Fx.b}{THEME.hi_fg("m")}{THEME.title}ode:{ARG_MODE or CONFIG.view_mode}{Fx.ub}{THEME.cpu_box(Symbol.title_right)}'
 			Graphs.cpu["up"] = Graph(w - bw - 3, hh, THEME.gradient["cpu"], cpu.cpu_usage[0])
 			Graphs.cpu["down"] = Graph(w - bw - 3, h - hh, THEME.gradient["cpu"], cpu.cpu_usage[0], invert=True)
 			Meters.cpu = Meter(cpu.cpu_usage[0][-1], bw - (21 if cpu.got_sensors else 9), "cpu")
@@ -1646,7 +1667,7 @@ class CpuBox(Box, SubBox):
 
 class MemBox(Box):
 	name = "mem"
-	height_p = 40
+	height_p = 38
 	width_p = 45
 	x = 1
 	y = 1
@@ -1667,8 +1688,13 @@ class MemBox(Box):
 
 	@classmethod
 	def _calc_size(cls):
-		cls.width = round(Term.width * cls.width_p / 100)
-		cls.height = round(Term.height * cls.height_p / 100) + 1
+		width_p: int; height_p: int
+		if cls.stat_mode:
+			width_p, height_p = 100, cls.height_p
+		else:
+			width_p, height_p = cls.width_p, cls.height_p
+		cls.width = round(Term.width * width_p / 100)
+		cls.height = round(Term.height * height_p / 100) + 1
 		Box._b_mem_h = cls.height
 		cls.y = Box._b_cpu_h + 1
 		if CONFIG.show_disks:
@@ -1703,7 +1729,7 @@ class MemBox(Box):
 
 	@classmethod
 	def _draw_bg(cls) -> str:
-		if cls.mini_mode: return ""
+		if cls.proc_mode: return ""
 		out: str = ""
 		out += f'{create_box(box=cls, line_color=THEME.mem_box)}'
 		if CONFIG.show_disks:
@@ -1715,7 +1741,7 @@ class MemBox(Box):
 
 	@classmethod
 	def _draw_fg(cls):
-		if cls.mini_mode: return
+		if cls.proc_mode: return
 		mem = MemCollector
 		if mem.redraw: cls.redraw = True
 		out: str = ""
@@ -1830,7 +1856,7 @@ class MemBox(Box):
 
 class NetBox(Box, SubBox):
 	name = "net"
-	height_p = 28
+	height_p = 30
 	width_p = 45
 	x = 1
 	y = 1
@@ -1844,10 +1870,15 @@ class NetBox(Box, SubBox):
 
 	@classmethod
 	def _calc_size(cls):
-		cls.width = round(Term.width * cls.width_p / 100)
+		width_p: int
+		if cls.stat_mode:
+			width_p = 100
+		else:
+			width_p = cls.width_p
+		cls.width = round(Term.width * width_p / 100)
 		cls.height = Term.height - Box._b_cpu_h - Box._b_mem_h
 		cls.y = Term.height - cls.height + 1
-		cls.box_width = 27
+		cls.box_width = 27 if cls.width > 45 else 19
 		cls.box_height = 9 if cls.height > 10 else cls.height - 2
 		cls.box_x = cls.width - cls.box_width - 1
 		cls.box_y = cls.y + ((cls.height - 2) // 2) - cls.box_height // 2 + 1
@@ -1857,13 +1888,13 @@ class NetBox(Box, SubBox):
 
 	@classmethod
 	def _draw_bg(cls) -> str:
-		if cls.mini_mode: return ""
+		if cls.proc_mode: return ""
 		return f'{create_box(box=cls, line_color=THEME.net_box)}\
 		{create_box(x=cls.box_x, y=cls.box_y, width=cls.box_width, height=cls.box_height, line_color=THEME.div_line, fill=False, title="Download", title2="Upload")}'
 
 	@classmethod
 	def _draw_fg(cls):
-		if cls.mini_mode: return
+		if cls.proc_mode: return
 		net = NetCollector
 		if net.redraw: cls.redraw = True
 		if not net.nic: return
@@ -1888,19 +1919,24 @@ class NetBox(Box, SubBox):
 				if not "a" in Key.mouse: Key.mouse["a"] = [[x+w - 20 - len(net.nic[:10]) + i, y-1] for i in range(4)]
 				out_misc += (f'{Mv.to(y-1, x+w - 21 - len(net.nic[:10]))}{THEME.net_box(Symbol.title_left)}{Fx.b if net.auto_min else ""}{THEME.hi_fg("a")}{THEME.title("uto")}'
 				f'{Fx.ub}{THEME.net_box(Symbol.title_right)}{Term.fg}')
+			if w - len(net.nic[:10]) - 20 > 13:
+				if not "y" in Key.mouse: Key.mouse["y"] = [[x+w - 26 - len(net.nic[:10]) + i, y-1] for i in range(4)]
+				out_misc += (f'{Mv.to(y-1, x+w - 27 - len(net.nic[:10]))}{THEME.net_box(Symbol.title_left)}{Fx.b if CONFIG.net_sync else ""}{THEME.title("s")}{THEME.hi_fg("y")}{THEME.title("nc")}'
+				f'{Fx.ub}{THEME.net_box(Symbol.title_right)}{Term.fg}')
 			Draw.buffer("net_misc", out_misc, only_save=True)
 
 		cy = 0
 		for direction in ["download", "upload"]:
 			strings = net.strings[net.nic][direction]
 			stats = net.stats[net.nic][direction]
+			if cls.redraw: stats["redraw"] = True
 			if stats["redraw"] or cls.resized:
-				if cls.redraw: stats["redraw"] = True
-				Graphs.net[direction] = Graph(w - bw - 3, cls.graph_height[direction], THEME.gradient[direction], stats["speed"], max_value=stats["graph_top"],
+				Graphs.net[direction] = Graph(w - bw - 3, cls.graph_height[direction], THEME.gradient[direction], stats["speed"], max_value=net.sync_top if CONFIG.net_sync else stats["graph_top"],
 					invert=False if direction == "download" else True, color_max_value=net.net_min.get(direction) if CONFIG.net_color_fixed else None)
 			out += f'{Mv.to(y if direction == "download" else y + cls.graph_height["download"], x)}{Graphs.net[direction](None if stats["redraw"] else stats["speed"][-1])}'
 
-			out += f'{Mv.to(by+cy, bx)}{THEME.main_fg}{cls.symbols[direction]} {strings["byte_ps"]:<10.10}{Mv.to(by+cy, bx+bw - 12)}{"(" + strings["bit_ps"] + ")":>12.12}'
+			out += (f'{Mv.to(by+cy, bx)}{THEME.main_fg}{cls.symbols[direction]} {strings["byte_ps"]:<10.10}' +
+					("" if bw < 20 else f'{Mv.to(by+cy, bx+bw - 12)}{"(" + strings["bit_ps"] + ")":>12.12}'))
 			cy += 1 if bh != 3 else 2
 			if bh >= 6:
 				out += f'{Mv.to(by+cy, bx)}{cls.symbols[direction]} {"Top:"}{Mv.to(by+cy, bx+bw - 12)}{"(" + strings["top"] + ")":>12.12}'
@@ -1911,7 +1947,8 @@ class NetBox(Box, SubBox):
 				else: cy += 1
 			stats["redraw"] = False
 
-		out += f'{Mv.to(y, x)}{THEME.graph_text(net.strings[net.nic]["download"]["graph_top"])}{Mv.to(y+h-1, x)}{THEME.graph_text(net.strings[net.nic]["upload"]["graph_top"])}'
+		out += (f'{Mv.to(y, x)}{THEME.graph_text(net.sync_string if CONFIG.net_sync else net.strings[net.nic]["download"]["graph_top"])}'
+				f'{Mv.to(y+h-1, x)}{THEME.graph_text(net.sync_string if CONFIG.net_sync else net.strings[net.nic]["upload"]["graph_top"])}')
 
 		Draw.buffer(cls.buffer, f'{out_misc}{out}{Term.fg}', only_save=Menu.active)
 		cls.redraw = cls.resized = False
@@ -1947,7 +1984,7 @@ class ProcBox(Box):
 	@classmethod
 	def _calc_size(cls):
 		width_p: int; height_p: int
-		if cls.mini_mode:
+		if cls.proc_mode:
 			width_p, height_p = 100, 80
 		else:
 			width_p, height_p = cls.width_p, cls.height_p
@@ -1964,6 +2001,7 @@ class ProcBox(Box):
 
 	@classmethod
 	def _draw_bg(cls) -> str:
+		if cls.stat_mode: return ""
 		return create_box(box=cls, line_color=THEME.proc_box)
 
 	@classmethod
@@ -2032,6 +2070,7 @@ class ProcBox(Box):
 
 	@classmethod
 	def _draw_fg(cls):
+		if cls.stat_mode: return
 		proc = ProcCollector
 		if proc.proc_interrupt: return
 		if proc.redraw: cls.redraw = True
@@ -2077,7 +2116,7 @@ class ProcBox(Box):
 			s_len += len(CONFIG.proc_sorting)
 			if cls.resized or s_len != cls.s_len or proc.detailed:
 				cls.s_len = s_len
-				for k in ["e", "r", "c", "t", "k", "i", "enter", "left", " "]:
+				for k in ["e", "r", "c", "t", "k", "i", "enter", "left", " ", "f", "delete"]:
 					if k in Key.mouse: del Key.mouse[k]
 			if proc.detailed:
 				killed = proc.details["killed"]
@@ -2156,12 +2195,12 @@ class ProcBox(Box):
 				out_misc += (f'{Mv.to(y-1, sort_pos - 25)}{THEME.proc_box(Symbol.title_left)}{Fx.b if CONFIG.proc_per_core else ""}'
 					f'{THEME.title("per-")}{THEME.hi_fg("c")}{THEME.title("ore")}{Fx.ub}{THEME.proc_box(Symbol.title_right)}')
 
-			if not "f" in Key.mouse or cls.resized: Key.mouse["f"] = [[x+9 + i, y-1] for i in range(6 if not proc.search_filter else 2 + len(proc.search_filter[-10:]))]
+			if not "f" in Key.mouse or cls.resized: Key.mouse["f"] = [[x+5 + i, y-1] for i in range(6 if not proc.search_filter else 2 + len(proc.search_filter[-10:]))]
 			if proc.search_filter:
-				if not "delete" in Key.mouse: Key.mouse["delete"] = [[x+12 + len(proc.search_filter[-10:]) + i, y-1] for i in range(3)]
+				if not "delete" in Key.mouse: Key.mouse["delete"] = [[x+11 + len(proc.search_filter[-10:]) + i, y-1] for i in range(3)]
 			elif "delete" in Key.mouse:
 				del Key.mouse["delete"]
-			out_misc += (f'{Mv.to(y-1, x + 8)}{THEME.proc_box(Symbol.title_left)}{Fx.b if cls.filtering or proc.search_filter else ""}{THEME.hi_fg("f")}{THEME.title}' +
+			out_misc += (f'{Mv.to(y-1, x + 7)}{THEME.proc_box(Symbol.title_left)}{Fx.b if cls.filtering or proc.search_filter else ""}{THEME.hi_fg("f")}{THEME.title}' +
 				("ilter" if not proc.search_filter and not cls.filtering else f' {proc.search_filter[-(10 if w < 83 else w - 74):]}{(Fx.bl + "█" + Fx.ubl) if cls.filtering else THEME.hi_fg(" del")}') +
 				f'{THEME.proc_box(Symbol.title_right)}')
 
@@ -2340,7 +2379,7 @@ class ProcBox(Box):
 			del Key.mouse["scroll_up"], Key.mouse["scroll_down"]
 
 		#* Draw current selection and number of processes
-		out += (f'{Mv.to(y+h, x + w - 3 - len(loc_string))}{THEME.proc_box}{Symbol.h_line*1}{Symbol.title_left}{THEME.title}'
+		out += (f'{Mv.to(y+h, x + w - 3 - len(loc_string))}{THEME.proc_box}{Symbol.title_left}{THEME.title}'
 					f'{Fx.b}{loc_string}{Fx.ub}{THEME.proc_box(Symbol.title_right)}')
 
 		#* Clean up dead processes graphs and counters
@@ -2823,6 +2862,8 @@ class NetCollector(Collector):
 	timestamp: float = time()
 	net_min: Dict[str, int] = {"download" : -1, "upload" : -1}
 	auto_min: bool = CONFIG.net_auto
+	sync_top: int = 0
+	sync_string: str = ""
 
 	@classmethod
 	def _get_nics(cls):
@@ -2942,7 +2983,12 @@ class NetCollector(Collector):
 
 		cls.timestamp = time()
 
-
+		if CONFIG.net_sync:
+			c_max: int = max(cls.stats[cls.nic]["download"]["graph_top"], cls.stats[cls.nic]["upload"]["graph_top"])
+			if c_max != cls.sync_top:
+				cls.sync_top = c_max
+				cls.sync_string = floating_humanizer(cls.sync_top, short=True)
+				NetBox.redraw = True
 
 	@classmethod
 	def _draw(cls):
@@ -2978,6 +3024,7 @@ class ProcCollector(Collector):
 	@classmethod
 	def _collect(cls):
 		'''List all processess with pid, name, arguments, threads, username, memory percent and cpu percent'''
+		if Box.stat_mode: return
 		out: Dict = {}
 		cls.det_cpu = 0.0
 		sorting: str = CONFIG.proc_sorting
@@ -3393,7 +3440,7 @@ class Menu:
 			"Selected (Mouse 1)" : "Show detailed information for selected process.",
 			"(Mouse scroll)" : "Scrolls any scrollable list/text under cursor.",
 			"(Esc, shift+m)" : "Toggles main menu.",
-			"(m)" : "Toggle mini mode.",
+			"(m)" : "Change current view mode, order full->proc->stat.",
 			"(F2, o)" : "Shows options.",
 			"(F1, h)" : "Shows this window.",
 			"(ctrl+z)" : "Sleep program and put in background.",
@@ -3408,10 +3455,11 @@ class Menu:
 			"(b) (n)" : "Select previous/next network device.",
 			"(z)" : "Toggle totals reset for current network device",
 			"(a)" : "Toggle auto scaling for the network graphs.",
+			"(y)" : "Toggle synced scaling mode for network graphs.",
 			"(f)" : "Input a string to filter processes with.",
 			"(c)" : "Toggle per-core cpu usage of processes.",
 			"(r)" : "Reverse sorting order in processes box.",
-			"(e)" : "Toggle processes tree view",
+			"(e)" : "Toggle processes tree view.",
 			"(delete)" : "Clear any entered filter.",
 			"Selected (T, t)" : "Terminate selected process with SIGTERM - 15.",
 			"Selected (K, k)" : "Kill selected process with SIGKILL - 9.",
@@ -3517,6 +3565,7 @@ class Menu:
 		d_quote: str
 		inputting: bool = False
 		input_val: str = ""
+		global ARG_MODE
 		Theme.refresh()
 		if not cls.background:
 			cls.background = f'{THEME.inactive_fg}' + Fx.uncolor(f'{Draw.saved_buffer()}') + f'{Term.fg}'
@@ -3538,11 +3587,12 @@ class Menu:
 				'',
 				'Set to False if you want terminal background',
 				'transparency.'],
-			"mini_mode" : [
-				'Enable bpytop mini mode at start.',
+			"view_mode" : [
+				'Set bpytop view mode.',
 				'',
-				'Disables net and mem boxes and lowers height',
-				'of cpu box.'],
+				'"full" for everything shown.',
+				'"proc" for cpu stats and processes.',
+				'"stat" for cpu, mem, disks and net stats shown.'],
 			"update_ms" : [
 				'Update time in milliseconds.',
 				'',
@@ -3677,6 +3727,13 @@ class Menu:
 				'rescales down to 10KibiBytes at the lowest.',
 				'',
 				'True or False.'],
+			"net_sync" : [
+				'Network scale sync.',
+				'',
+				'Syncs the scaling for download and upload to',
+				'whichever currently has the highest scale.',
+				'',
+				'True or False.'],
 			"net_color_fixed" : [
 				'Set network graphs color gradient to fixed.',
 				'',
@@ -3707,6 +3764,7 @@ class Menu:
 		option_len: int = len(option_items) * 2
 		sorting_i: int = CONFIG.sorting_options.index(CONFIG.proc_sorting)
 		loglevel_i: int = CONFIG.log_levels.index(CONFIG.log_level)
+		view_mode_i: int = CONFIG.view_modes.index(CONFIG.view_mode)
 		color_i: int
 		while not cls.close:
 			key = ""
@@ -3751,11 +3809,13 @@ class Menu:
 						counter = f' {sorting_i + 1}/{len(CONFIG.sorting_options)}'
 					elif opt == "log_level":
 						counter = f' {loglevel_i + 1}/{len(CONFIG.log_levels)}'
+					elif opt == "view_mode":
+						counter = f' {view_mode_i + 1}/{len(CONFIG.view_modes)}'
 					else:
 						counter = ""
 					out += f'{Mv.to(y+1+cy, x+1)}{t_color}{Fx.b}{opt.replace("_", " ").capitalize() + counter:^24.24}{Fx.ub}{Mv.to(y+2+cy, x+1)}{v_color}'
 					if opt == selected:
-						if isinstance(value, bool) or opt in ["color_theme", "proc_sorting", "log_level"]:
+						if isinstance(value, bool) or opt in ["color_theme", "proc_sorting", "log_level", "view_mode"]:
 							out += f'{t_color} {Symbol.left}{v_color}{d_quote + str(value) + d_quote:^20.20}{t_color}{Symbol.right} '
 						elif inputting:
 							out += f'{str(input_val)[-17:] + Fx.bl + "█" + Fx.ubl + "" + Symbol.enter:^33.33}'
@@ -3862,7 +3922,7 @@ class Menu:
 						else:
 							CpuCollector.sensor_method = ""
 							CpuCollector.got_sensors = False
-					if selected in ["net_auto", "net_color_fixed"]:
+					if selected in ["net_auto", "net_color_fixed", "net_sync"]:
 						if selected == "net_auto": NetCollector.auto_min = CONFIG.net_auto
 						NetBox.redraw = True
 					if selected == "theme_background":
@@ -3893,6 +3953,21 @@ class Menu:
 					CONFIG.log_level = CONFIG.log_levels[loglevel_i]
 					errlog.setLevel(getattr(logging, CONFIG.log_level))
 					errlog.info(f'Loglevel set to {CONFIG.log_level}')
+				elif key in ["left", "right"] and selected == "view_mode":
+					if key == "left":
+						view_mode_i -= 1
+						if view_mode_i < 0: view_mode_i = len(CONFIG.view_modes) - 1
+					elif key == "right":
+						view_mode_i += 1
+						if view_mode_i > len(CONFIG.view_modes) - 1: view_mode_i = 0
+					CONFIG.view_mode = CONFIG.view_modes[view_mode_i]
+					Box.proc_mode = True if CONFIG.view_mode == "proc" else False
+					Box.stat_mode = True if CONFIG.view_mode == "stat" else False
+					if ARG_MODE:
+						ARG_MODE = ""
+					Draw.clear(saved=True)
+					Term.refresh(force=True)
+					cls.resized = False
 				elif key == "up":
 					selected_int -= 1
 					if selected_int < 0: selected_int = len(option_items) - 1
@@ -4254,6 +4329,7 @@ def units_to_bytes(value: str) -> int:
 def process_keys():
 	mouse_pos: Tuple[int, int] = (0, 0)
 	filtered: bool = False
+	global ARG_MODE
 	while Key.has_key():
 		key = Key.get()
 		if key in ["mouse_scroll_up", "mouse_scroll_down", "mouse_click"]:
@@ -4306,6 +4382,9 @@ def process_keys():
 		elif key == "z":
 			NetCollector.reset = not NetCollector.reset
 			Collector.collect(NetCollector, redraw=True)
+		elif key == "y":
+			CONFIG.net_sync = not CONFIG.net_sync
+			Collector.collect(NetCollector, redraw=True)
 		elif key == "a":
 			NetCollector.auto_min = not NetCollector.auto_min
 			NetCollector.net_min = {"download" : -1, "upload" : -1}
@@ -4336,7 +4415,14 @@ def process_keys():
 			if not ProcCollector.search_filter: ProcBox.start = 0
 			Collector.collect(ProcCollector, redraw=True, only_draw=True)
 		elif key == "m":
-			Box.mini_mode = not Box.mini_mode
+			if ARG_MODE:
+				ARG_MODE = ""
+			elif CONFIG.view_modes.index(CONFIG.view_mode) + 1 > len(CONFIG.view_modes) - 1:
+				CONFIG.view_mode = CONFIG.view_modes[0]
+			else:
+				CONFIG.view_mode = CONFIG.view_modes[(CONFIG.view_modes.index(CONFIG.view_mode) + 1)]
+			Box.proc_mode = True if CONFIG.view_mode == "proc" else False
+			Box.stat_mode = True if CONFIG.view_mode == "stat" else False
 			Draw.clear(saved=True)
 			Term.refresh(force=True)
 		elif key.lower() in ["t", "k", "i"] and (ProcBox.selected > 0 or ProcCollector.detailed):
