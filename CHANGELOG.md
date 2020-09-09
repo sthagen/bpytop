@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.26
+
+* Fixed: Cpu temp color index crash
+* Fixed: Start from virtualenv crash
+
+## v1.0.25
+
+* Added: More sizing adaptation for processes
+* Fixed: Clock centering
+
 ## v1.0.24
 
 * Fixed: "view_mode" option entry format
