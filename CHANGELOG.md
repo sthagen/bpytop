@@ -1,5 +1,113 @@
 # Changelog
 
+## v1.0.45
+
+* Fixed: Missing temps if high or crit is None, by @TheComputerGuy96
+* Changed: Some refactoring by @dpshelio
+* Added: Proper mapping for correct coretemp display and added toggle for coretemp
+* Fixed: Cleanup of escaped characters in process argument string
+
+## v1.0.44
+
+* Added: Spread CPUs accross columns evenly if possible, by @ErwinJunge
+* Added: Additional crash fixes for graph and swap toggles
+
+## v1.0.43
+
+* Fixed: Battery meter not clearing properly when disabled
+* Fixed: Correction for broken cpu high and cpu critical temps
+* Fixed: get_cpu_name() function for some Xeon cpus
+* Fixed: Additional error handling to prevent crashes from graph and swap toggles
+
+## v1.0.42
+
+* Fixed: Battery status not using same sensors as psutil
+* Added: Stripping of .local from /host clock format
+* Fixed: Battery clear if removed
+
+## v1.0.41
+
+* Skipped due to pypi - github versioning error
+
+## v1.0.40
+
+* Fixed: Title leading whitespace
+* Fixed: Battery meter crash on non Linux systems
+
+## v1.0.39
+
+* Fixed: Manual sensor selection screen refresh
+* Fixed: Rare swap toggle crash
+* Fixed: Clock and battery placement and sizing
+
+## v1.0.38
+
+* Fixed: Cpu sensor check when changing from manual sensor to Auto
+* Fixed: Menu collection timeout and menu background update stall
+* Added: Custom options for clock formatting: hostname and username
+
+## v1.0.37
+
+* Fixed: Swap toggle rare crash
+* Fixed: Cpu sensor option to trigger temp toggle if check temp is true
+
+## v1.0.36
+
+* Added: Rounding for floating_humanizer() short option
+* Fixed: Cpu temp not showing when manually selected and not auto detected
+* Fixed Crash during theme change
+
+## v1.0.35
+
+* Fixed: Decimal placement in floating_humanizer() function
+
+## v1.0.34
+
+* Changed: Improvement on cpu name detection
+* Added: Option to choose cpu temperature sensor
+* Fixed: Battery meter adaptation
+
+## v1.0.33
+
+* Changed: Improvement on osx cpu temperature collection with coretemp
+* Fixed: Battery stats crash and better battery status detection
+* README: coretemp install instructions by @hacker1024
+* README: Added notice about font problems and possible solutions
+
+## v1.0.32
+
+* Added: Symbol for battery inactive
+* Fixed: Cpu model name exception for certain xeon cpus
+* Fixed: Exception when sending signal using uppercase T, K, I
+* Fixed: Battery meter placement calculation correction
+* Added: Support for OSX cpu core temperatures via coretemp program
+
+## v1.0.31
+
+* Fixed: Battery meter redraw after terminal resize
+* Fixed: Battery meter additional fixes
+* Fixed: Cpu temp color wrong on small sizes
+
+## v1.0.30
+
+* Changed: Argument parsing using argparse
+* Fixed: Hide battery time when not known
+
+## v1.0.29
+
+* Fixed: Battery percent converted to integer and battery time hidden at 100% level
+
+## v1.0.28
+
+* Fixed: Battery meter causing crash when connecting/disconnecting battery
+* README: Added more repositories
+
+## v1.0.27
+
+* Added: kyli0x theme by @kyli0x
+* Added: Battery meter and stats
+* Added: Option to change the tree view auto collapse depth
+
 ## v1.0.26
 
 * Fixed: Cpu temp color index crash

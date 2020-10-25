@@ -17,7 +17,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-import os, sys, threading, signal, re, subprocess, logging, logging.handlers
+import os, sys, threading, signal, re, subprocess, logging, logging.handlers, argparse
 import urllib.request
 from time import time, sleep, strftime, localtime
 from datetime import timedelta
@@ -32,7 +32,7 @@ from shutil import which
 from typing import List, Set, Dict, Tuple, Optional, Union, Any, Callable, ContextManager, Iterable, Type, NamedTuple
 
 errors: List[str] = []
-try: import fcntl, termios, tty
+try: import fcntl, termios, tty, pwd
 except Exception as e: errors.append(f'{e}')
 
 try: import psutil # type: ignore
@@ -47,49 +47,40 @@ elif "darwin" in sys.platform: SYSTEM = "MacOS"
 else: SYSTEM = "Other"
 
 if errors:
-	print ("ERROR!")
-	for error in errors:
-		print(error)
+	print("ERROR!")
+	print("\n".join(errors))
 	if SYSTEM == "Other":
 		print("\nUnsupported platform!\n")
 	else:
 		print("\nInstall required modules!\n")
 	raise SystemExit(1)
 
-VERSION: str = "1.0.26"
+VERSION: str = "1.0.45"
 
 #? Argument parser ------------------------------------------------------------------------------->
-if len(sys.argv) > 1:
-	for arg in sys.argv[1:]:
-		if not arg in ["-m", "--mini", "-v", "--version", "-h", "--help", "--debug", "-f", "-p", "-s", "--full", "--proc", "--stat"]:
-			print(f'Unrecognized argument: {arg}\n'
-				f'Use argument -h or --help for help')
-			raise SystemExit(1)
+args = argparse.ArgumentParser()
+args.add_argument("-f" , "--full"		,action="store_true" ,help ="Start in full mode showing all boxes [default]")
+args.add_argument("-p" , "--proc"		,action="store_true" ,help ="Start in minimal mode without memory and net boxes")
+args.add_argument("-s" , "--stat"		,action="store_true" ,help ="Start in minimal mode without process box")
+args.add_argument("-v" , "--version"	,action="store_true" ,help ="Show version info and exit")
+args.add_argument("--debug"				,action="store_true" ,help ="Start with loglevel set to DEBUG overriding value set in config")
+stdargs = args.parse_args()
 
-if "-h" in sys.argv or "--help" in sys.argv:
-	print(f'USAGE: {sys.argv[0]} [argument]\n\n'
-		f'Arguments:\n'
-		f'    -f, --full            Start in full mode showing all boxes [default]\n'
-		f'    -p, --proc            Start in minimal mode without memory and net boxes\n'
-		f'    -s, --stat            Start in minimal mode without process box\n'
-		f'    -v, --version         Show version info and exit\n'
-		f'    -h, --help            Show this help message and exit\n'
-		f'    --debug               Start with loglevel set to DEBUG overriding value set in config\n'
-	)
-	raise SystemExit(0)
-elif "-v" in sys.argv or "--version" in sys.argv:
+if stdargs.version:
 	print(f'bpytop version: {VERSION}\n'
 		f'psutil version: {".".join(str(x) for x in psutil.version_info)}')
 	raise SystemExit(0)
 
 ARG_MODE: str = ""
-if "-f" in sys.argv or "--full" in sys.argv:
+
+if stdargs.full:
 	ARG_MODE = "full"
-elif "-p" in sys.argv or "--proc" in sys.argv:
+elif stdargs.proc:
 	ARG_MODE = "proc"
-elif "-s" in sys.argv or "--stat" in sys.argv:
+elif stdargs.stat:
 	ARG_MODE = "stat"
 
+DEBUG = stdargs.debug
 
 #? Variables ------------------------------------------------------------------------------------->
 
@@ -128,6 +119,9 @@ proc_reversed=$proc_reversed
 #* Show processes as a tree
 proc_tree=$proc_tree
 
+#* Which depth the tree view should auto collapse processes at
+tree_depth=$tree_depth
+
 #* Use the cpu graph colors in the process list.
 proc_colors=$proc_colors
 
@@ -142,6 +136,12 @@ proc_mem_bytes=$proc_mem_bytes
 
 #* Check cpu temperature, needs "osx-cpu-temp" on MacOS X.
 check_temp=$check_temp
+
+#* Which sensor to use for cpu temperature, use options menu to select from list of available sensors.
+cpu_sensor=$cpu_sensor
+
+#* Show temperatures for cpu cores also if check_temp is True and sensors has been found
+show_coretemp=$show_coretemp
 
 #* Draw a clock at top of screen, formatting according to strftime, empty string to disable.
 draw_clock="$draw_clock"
@@ -181,6 +181,9 @@ net_sync=$net_sync
 #* If the network graphs color gradient should scale to bandwith usage or auto scale, bandwith usage is based on "net_download" and "net_upload" values
 net_color_fixed=$net_color_fixed
 
+#* Show battery stats in top right if battery is present
+show_battery=$show_battery
+
 #* Show init screen at startup, the init screen is purely cosmetical
 show_init=$show_init
 
@@ -216,11 +219,6 @@ CORES: int = psutil.cpu_count(logical=False) or 1
 THREADS: int = psutil.cpu_count(logical=True) or 1
 
 THREAD_ERROR: int = 0
-
-if "--debug" in sys.argv:
-	DEBUG = True
-else:
-	DEBUG = False
 
 DEFAULT_THEME: Dict[str, str] = {
 	"main_bg" : "",
@@ -361,7 +359,8 @@ class Config:
 	'''Holds all config variables and functions for loading from and saving to disk'''
 	keys: List[str] = ["color_theme", "update_ms", "proc_sorting", "proc_reversed", "proc_tree", "check_temp", "draw_clock", "background_update", "custom_cpu_name",
 						"proc_colors", "proc_gradient", "proc_per_core", "proc_mem_bytes", "disks_filter", "update_check", "log_level", "mem_graphs", "show_swap",
-						"swap_disk", "show_disks", "net_download", "net_upload", "net_auto", "net_color_fixed", "show_init", "view_mode", "theme_background", "net_sync"]
+						"swap_disk", "show_disks", "net_download", "net_upload", "net_auto", "net_color_fixed", "show_init", "view_mode", "theme_background",
+						"net_sync", "show_battery", "tree_depth", "cpu_sensor", "show_coretemp"]
 	conf_dict: Dict[str, Union[str, int, bool]] = {}
 	color_theme: str = "Default"
 	theme_background: bool = True
@@ -369,11 +368,14 @@ class Config:
 	proc_sorting: str = "cpu lazy"
 	proc_reversed: bool = False
 	proc_tree: bool = False
+	tree_depth: int = 3
 	proc_colors: bool = True
 	proc_gradient: bool = True
 	proc_per_core: bool = False
 	proc_mem_bytes: bool = True
 	check_temp: bool = True
+	cpu_sensor: str = "Auto"
+	show_coretemp: bool = True
 	draw_clock: str = "%X"
 	background_update: bool = True
 	custom_cpu_name: str = ""
@@ -388,6 +390,7 @@ class Config:
 	net_color_fixed: bool = False
 	net_auto: bool = True
 	net_sync: bool = False
+	show_battery: bool = True
 	show_init: bool = True
 	view_mode: str = "full"
 	log_level: str = "WARNING"
@@ -399,6 +402,19 @@ class Config:
 	log_levels: List[str] = ["ERROR", "WARNING", "INFO", "DEBUG"]
 
 	view_modes: List[str] = ["full", "proc", "stat"]
+
+	cpu_sensors: List[str] = [ "Auto" ]
+
+	if hasattr(psutil, "sensors_temperatures"):
+		try:
+			_temps = psutil.sensors_temperatures()
+			if _temps:
+				for _name, _entries in _temps.items():
+					for _num, _entry in enumerate(_entries, 1):
+						if hasattr(_entry, "current"):
+							cpu_sensors.append(f'{_name}:{_num if _entry.label == "" else _entry.label}')
+		except:
+			pass
 
 	changed: bool = False
 	recreate: bool = False
@@ -480,6 +496,9 @@ class Config:
 		for net_name in ["net_download", "net_upload"]:
 			if net_name in new_config and not new_config[net_name][0].isdigit(): # type: ignore
 				new_config[net_name] = "_error_"
+		if "cpu_sensor" in new_config and not new_config["cpu_sensor"] in self.cpu_sensors:
+			new_config["cpu_sensor"] = "_error_"
+			self.warnings.append(f'Config key "cpu_sensor" does not contain an available sensor!')
 		return new_config
 
 	def save_config(self):
@@ -497,7 +516,7 @@ try:
 		errlog.setLevel(logging.DEBUG)
 	else:
 		errlog.setLevel(getattr(logging, CONFIG.log_level))
-		if CONFIG.log_level == "DEBUG": DEBUG = True
+		DEBUG = CONFIG.log_level == "DEBUG"
 	errlog.info(f'New instance of bpytop version {VERSION} started with pid {os.getpid()}')
 	errlog.info(f'Loglevel set to {"DEBUG" if DEBUG else CONFIG.log_level}')
 	errlog.debug(f'Using psutil version {".".join(str(x) for x in psutil.version_info)}')
@@ -594,8 +613,10 @@ class Term:
 
 	@staticmethod
 	def title(text: str = "") -> str:
-		if text: text = f' {text}'
-		return f'\033]0;{os.environ.get("TERMINAL_TITLE", "")}{text}\a'
+		out: str = f'{os.environ.get("TERMINAL_TITLE", "")}'
+		if out and text: out += " "
+		if text: out += f'{text}'
+		return f'\033]0;{out}\a'
 
 class Fx:
 	"""Text effects
@@ -760,8 +781,7 @@ class Key:
 
 	@classmethod
 	def has_key(cls) -> bool:
-		if cls.list: return True
-		else: return False
+		return bool(cls.list)
 
 	@classmethod
 	def clear(cls):
@@ -927,7 +947,7 @@ class Draw:
 				if name in cls.strings:
 					out += cls.strings[name]
 					if cls.save[name]:
-						cls.saved[name] = out
+						cls.saved[name] = cls.strings[name]
 					if cls.once[name] and not clear:
 						cls.clear(name)
 			if clear:
@@ -1133,8 +1153,8 @@ class Theme:
 
 		#* Get key names from DEFAULT_THEME dict to not leave any color unset if missing from theme dict
 		for item, value in DEFAULT_THEME.items():
-			default = False if item not in ["main_fg", "main_bg"] else True
-			depth = "fg" if item not in ["main_bg", "selected_bg"] else "bg"
+			default = item in ["main_fg", "main_bg"]
+			depth = "bg" if item in ["main_bg", "selected_bg"] else "fg"
 			if item in tdict:
 				setattr(self, item, Color(tdict[item], depth=depth, default=default))
 			else:
@@ -1160,8 +1180,7 @@ class Theme:
 
 			else:
 				c = Color.fg(*rgb["start"])
-				for _ in range(101):
-					self.gradient[name] += [c]
+				self.gradient[name] += [c] * 101
 		#* Set terminal colors
 		Term.fg = self.main_fg
 		Term.bg = self.main_bg if CONFIG.theme_background else "\033[49m"
@@ -1185,7 +1204,7 @@ class Theme:
 		'''Load a bashtop formatted theme file and return a dict'''
 		new_theme: Dict[str, str] = {}
 		try:
-			with open(path) as f:
+			with open(path, "r") as f:
 				for line in f:
 					if not line.startswith("theme["): continue
 					key = line[6:line.find("]")]
@@ -1211,7 +1230,7 @@ class Banner:
 			line_dark = Color.fg(f'#{80 - num * 6}')
 			for n, letter in enumerate(line):
 				if letter == "█" and c_color != line_color:
-					if n > 5 and n < 25: c_color = line_color2
+					if 5 < n < 25: c_color = line_color2
 					else: c_color = line_color
 					out_var += c_color
 				elif letter == " ":
@@ -1419,14 +1438,16 @@ class Meter:
 	color_inactive: Color
 	gradient_name: str
 	width: int
+	invert: bool
 	saved: Dict[int, str]
 
-	def __init__(self, value: int, width: int, gradient_name: str):
+	def __init__(self, value: int, width: int, gradient_name: str, invert: bool = False):
 		self.gradient_name = gradient_name
 		self.color_gradient = THEME.gradient[gradient_name]
 		self.color_inactive = THEME.meter_bg
 		self.width = width
 		self.saved = {}
+		self.invert = invert
 		self.out = self._create(value)
 
 	def __call__(self, value: Union[int, None]) -> str:
@@ -1451,7 +1472,7 @@ class Meter:
 		out: str = ""
 		for i in range(1, self.width + 1):
 			if value >= round(i * 100 / self.width):
-				out += f'{self.color_gradient[round(i * 100 / self.width)]}{Symbol.meter}'
+				out += f'{self.color_gradient[round(i * 100 / self.width) if not self.invert else round(100 - (i * 100 / self.width))]}{Symbol.meter}'
 			else:
 				out += self.color_inactive(Symbol.meter * (self.width + 1 - i))
 				break
@@ -1463,6 +1484,7 @@ class Meter:
 
 class Meters:
 	cpu: Meter
+	battery: Meter
 	mem: Dict[str, Union[Meter, Graph]] = {}
 	swap: Dict[str, Union[Meter, Graph]] = {}
 	disks_used: Dict[str, Meter] = {}
@@ -1477,8 +1499,8 @@ class Box:
 	y: int
 	width: int
 	height: int
-	proc_mode: bool = True if (CONFIG.view_mode == "proc" and not ARG_MODE) or ARG_MODE == "proc" else False
-	stat_mode: bool = True if (CONFIG.view_mode == "stat" and not ARG_MODE) or ARG_MODE == "stat" else False
+	proc_mode: bool = (CONFIG.view_mode == "proc" and not ARG_MODE) or ARG_MODE == "proc"
+	stat_mode: bool = (CONFIG.view_mode == "stat" and not ARG_MODE) or ARG_MODE == "stat"
 	out: str
 	bg: str
 	_b_cpu_h: int
@@ -1487,7 +1509,14 @@ class Box:
 	buffers: List[str] = []
 	clock_on: bool = False
 	clock: str = ""
+	clock_len: int = 0
 	resized: bool = False
+	clock_custom_format: Dict[str, Any] = {
+		"/host" : os.uname()[1],
+		"/user" : os.environ.get("USER") or pwd.getpwuid(os.getuid())[0],
+		}
+	if clock_custom_format["/host"].endswith(".local"):
+		clock_custom_format["/host"] = clock_custom_format["/host"].replace(".local", "")
 
 	@classmethod
 	def calc_sizes(cls):
@@ -1506,18 +1535,31 @@ class Box:
 		Draw.buffer("update_ms!" if now and not Menu.active else "update_ms",
 			f'{Mv.to(CpuBox.y, xpos)}{THEME.cpu_box(Symbol.h_line * 7, Symbol.title_left)}{Fx.b}{THEME.hi_fg("+")} ',
 			f'{THEME.title(update_string)} {THEME.hi_fg("-")}{Fx.ub}{THEME.cpu_box(Symbol.title_right)}', only_save=Menu.active, once=True)
-		if now and not Menu.active: Draw.clear("update_ms")
+		if now and not Menu.active:
+			Draw.clear("update_ms")
+			if CONFIG.show_battery and hasattr(psutil, "sensors_battery") and psutil.sensors_battery():
+				Draw.out("battery")
 
 	@classmethod
 	def draw_clock(cls, force: bool = False):
+		out: str = ""
 		if force: pass
 		elif not cls.clock_on or Term.resized or strftime(CONFIG.draw_clock) == cls.clock: return
-		cls.clock = strftime(CONFIG.draw_clock)
-		clock_len = len(cls.clock[:(CpuBox.width-58)])
+		clock_string = cls.clock = strftime(CONFIG.draw_clock)
+		for custom in cls.clock_custom_format:
+			if custom in clock_string:
+				clock_string = clock_string.replace(custom, cls.clock_custom_format[custom])
+		clock_len = len(clock_string[:(CpuBox.width-56)])
+		if cls.clock_len != clock_len and not CpuBox.resized:
+			out = f'{Mv.to(CpuBox.y, ((CpuBox.width)//2)-(cls.clock_len//2))}{Fx.ub}{THEME.cpu_box}{Symbol.h_line * cls.clock_len}'
+		cls.clock_len = clock_len
 		now: bool = False if Menu.active else not force
-		Draw.buffer("clock", (f'{Mv.to(CpuBox.y, ((CpuBox.width-2)//2)-(clock_len//2)-3)}{Fx.ub}{THEME.cpu_box}{Symbol.h_line * 4}'
-			f'{Symbol.title_left}{Fx.b}{THEME.title(cls.clock[:clock_len])}{Fx.ub}{THEME.cpu_box}{Symbol.title_right}{Symbol.h_line * 4}{Term.fg}'),
-		z=1, now=now, once=not force, only_save=Menu.active)
+		out += (f'{Mv.to(CpuBox.y, ((CpuBox.width)//2)-(clock_len//2))}{Fx.ub}{THEME.cpu_box}'
+			f'{Symbol.title_left}{Fx.b}{THEME.title(clock_string[:clock_len])}{Fx.ub}{THEME.cpu_box}{Symbol.title_right}{Term.fg}')
+		Draw.buffer("clock", out, z=1, now=now, once=not force, only_save=Menu.active)
+		if now and not Menu.active:
+			if CONFIG.show_battery and hasattr(psutil, "sensors_battery") and psutil.sensors_battery():
+				Draw.out("battery")
 
 	@classmethod
 	def draw_bg(cls, now: bool = True):
@@ -1543,6 +1585,17 @@ class CpuBox(Box, SubBox):
 	resized: bool = True
 	redraw: bool = False
 	buffer: str = "cpu"
+	battery_percent: int = 1000
+	battery_secs: int = 0
+	battery_status: str = "Unknown"
+	old_battery_pos = 0
+	old_battery_len = 0
+	battery_path: Union[str, None] = ""
+	battery_clear: bool = False
+	battery_symbols: Dict[str, str] = {"Charging": "▲",
+									"Discharging": "▼",
+									"Full": "■",
+									"Not charging": "■"}
 	clock_block: bool = True
 	Box.buffers.append(buffer)
 
@@ -1586,6 +1639,47 @@ class CpuBox(Box, SubBox):
 		f'{create_box(x=cls.box_x, y=cls.box_y, width=cls.box_width, height=cls.box_height, line_color=THEME.div_line, fill=False, title=CPU_NAME[:cls.box_width - 14] if not CONFIG.custom_cpu_name else CONFIG.custom_cpu_name[:cls.box_width - 14])}')
 
 	@classmethod
+	def battery_activity(cls) -> bool:
+		if not hasattr(psutil, "sensors_battery") or psutil.sensors_battery() == None:
+			if cls.battery_percent != 1000:
+				cls.battery_clear = True
+			return False
+
+		if cls.battery_path == "":
+			cls.battery_path = None
+			if os.path.isdir("/sys/class/power_supply"):
+				for directory in sorted(os.listdir("/sys/class/power_supply")):
+					if directory.startswith('BAT') or 'battery' in directory.lower():
+						cls.battery_path = f'/sys/class/power_supply/{directory}/'
+						break
+
+		return_true: bool = False
+		percent: int = ceil(getattr(psutil.sensors_battery(), "percent", 0))
+		if percent != cls.battery_percent:
+			cls.battery_percent = percent
+			return_true = True
+
+		seconds: int = getattr(psutil.sensors_battery(), "secsleft", 0)
+		if seconds != cls.battery_secs:
+			cls.battery_secs = seconds
+			return_true = True
+
+		status: str = "not_set"
+		if cls.battery_path:
+			status = readfile(cls.battery_path + "status", default="not_set")
+		if status == "not_set" and getattr(psutil.sensors_battery(), "power_plugged", None) == True:
+			status = "Charging" if cls.battery_percent < 100 else "Full"
+		elif status == "not_set" and getattr(psutil.sensors_battery(), "power_plugged", None) == False:
+			status = "Discharging"
+		elif status == "not_set":
+			status = "Unknown"
+		if status != cls.battery_status:
+			cls.battery_status = status
+			return_true = True
+
+		return return_true or cls.resized or cls.redraw or Menu.active
+
+	@classmethod
 	def _draw_fg(cls):
 		cpu = CpuCollector
 		if cpu.redraw: cls.redraw = True
@@ -1595,6 +1689,7 @@ class CpuBox(Box, SubBox):
 		x, y, w, h = cls.x + 1, cls.y + 1, cls.width - 2, cls.height - 2
 		bx, by, bw, bh = cls.box_x + 1, cls.box_y + 1, cls.box_width - 2, cls.box_height - 2
 		hh: int = ceil(h / 2)
+		hide_cores: bool = (cpu.cpu_temp_only or not CONFIG.show_coretemp) and cpu.got_sensors
 
 		if cls.resized or cls.redraw:
 			if not "m" in Key.mouse:
@@ -1605,13 +1700,44 @@ class CpuBox(Box, SubBox):
 			Meters.cpu = Meter(cpu.cpu_usage[0][-1], bw - (21 if cpu.got_sensors else 9), "cpu")
 			if cls.column_size > 0:
 				for n in range(THREADS):
-					Graphs.cores[n] = Graph(5 * cls.column_size, 1, None, cpu.cpu_usage[n + 1])
+					Graphs.cores[n] = Graph(5 * cls.column_size + (12 * hide_cores), 1, None, cpu.cpu_usage[n + 1])
 			if cpu.got_sensors:
 				Graphs.temps[0] = Graph(5, 1, None, cpu.cpu_temp[0], max_value=cpu.cpu_temp_crit, offset=-23)
 				if cls.column_size > 1:
 					for n in range(1, THREADS + 1):
+						if not cpu.cpu_temp[n]:
+							continue
 						Graphs.temps[n] = Graph(5, 1, None, cpu.cpu_temp[n], max_value=cpu.cpu_temp_crit, offset=-23)
 			Draw.buffer("cpu_misc", out_misc, only_save=True)
+
+		if CONFIG.show_battery and cls.battery_activity():
+			bat_out: str = ""
+			if cls.battery_secs > 0:
+				battery_time: str = f' {cls.battery_secs // 3600:02}:{(cls.battery_secs % 3600) // 60:02}'
+			else:
+				battery_time = ""
+			if not hasattr(Meters, "battery") or cls.resized:
+				Meters.battery = Meter(cls.battery_percent, 10, "cpu", invert=True)
+			battery_symbol: str = cls.battery_symbols.get(cls.battery_status, "○")
+			battery_len: int = len(f'{CONFIG.update_ms}') + (11 if cls.width >= 100 else 0) + len(battery_time) + len(f'{cls.battery_percent}')
+			battery_pos = cls.width - battery_len - 17
+			if (battery_pos != cls.old_battery_pos or battery_len != cls.old_battery_len) and cls.old_battery_pos > 0 and not cls.resized:
+				bat_out += f'{Mv.to(y-1, cls.old_battery_pos)}{THEME.cpu_box(Symbol.h_line*(cls.old_battery_len+4))}'
+			cls.old_battery_pos, cls.old_battery_len = battery_pos, battery_len
+			bat_out += (f'{Mv.to(y-1, battery_pos)}{THEME.cpu_box(Symbol.title_left)}{Fx.b}{THEME.title}BAT{battery_symbol} {cls.battery_percent}%'+
+				("" if cls.width < 100 else f' {Fx.ub}{Meters.battery(cls.battery_percent)}{Fx.b}') +
+				f'{THEME.title}{battery_time}{Fx.ub}{THEME.cpu_box(Symbol.title_right)}')
+			Draw.buffer("battery", f'{bat_out}{Term.fg}', only_save=Menu.active)
+		elif cls.battery_clear:
+			out += f'{Mv.to(y-1, cls.old_battery_pos)}{THEME.cpu_box(Symbol.h_line*(cls.old_battery_len+4))}'
+			cls.battery_clear = False
+			cls.battery_percent = 1000
+			cls.battery_secs = 0
+			cls.battery_status = "Unknown"
+			cls.old_battery_pos = 0
+			cls.old_battery_len = 0
+			cls.battery_path = ""
+			Draw.clear("battery", saved=True)
 
 		cx = cy = cc = 0
 		ccw = (bw + 1) // cls.box_columns
@@ -1629,19 +1755,21 @@ class CpuBox(Box, SubBox):
 		for n in range(1, THREADS + 1):
 			out += f'{THEME.main_fg}{Mv.to(by + cy, bx + cx)}{Fx.b + "C" + Fx.ub if THREADS < 100 else ""}{str(n):<{2 if cls.column_size == 0 else 3}}'
 			if cls.column_size > 0:
-				out += f'{THEME.inactive_fg}{"⡀" * (5 * cls.column_size)}{Mv.l(5 * cls.column_size)}{THEME.gradient["cpu"][cpu.cpu_usage[n][-1]]}{Graphs.cores[n-1](None if cls.resized else cpu.cpu_usage[n][-1])}'
+				out += f'{THEME.inactive_fg}{"⡀" * (5 * cls.column_size + (12 * hide_cores ))}{Mv.l(5 * cls.column_size + (12 * hide_cores ))}{THEME.gradient["cpu"][cpu.cpu_usage[n][-1]]}{Graphs.cores[n-1](None if cls.resized else cpu.cpu_usage[n][-1])}'
 			else:
 				out += f'{THEME.gradient["cpu"][cpu.cpu_usage[n][-1]]}'
 			out += f'{cpu.cpu_usage[n][-1]:>{3 if cls.column_size < 2 else 4}}{THEME.main_fg}%'
-			if cpu.got_sensors:
+			if cpu.got_sensors and cpu.cpu_temp[n] and not hide_cores:
 				if cls.column_size > 1:
 					out += f'{THEME.inactive_fg} ⡀⡀⡀⡀⡀{Mv.l(5)}{THEME.gradient["temp"][100 if cpu.cpu_temp[n][-1] >= cpu.cpu_temp_crit else (cpu.cpu_temp[n][-1] * 100 // cpu.cpu_temp_crit)]}{Graphs.temps[n](None if cls.resized else cpu.cpu_temp[n][-1])}'
 				else:
-					out += f'{THEME.gradient["temp"][cpu.cpu_temp[n][-1]]}'
+					out += f'{THEME.gradient["temp"][100 if cpu.cpu_temp[n][-1] >= cpu.cpu_temp_crit else (cpu.cpu_temp[n][-1] * 100 // cpu.cpu_temp_crit)]}'
 				out += f'{cpu.cpu_temp[n][-1]:>4}{THEME.main_fg}°C'
+			elif cpu.got_sensors and not hide_cores:
+				out += f'{Mv.r(12)}'
 			out += f'{THEME.div_line(Symbol.v_line)}'
 			cy += 1
-			if cy == bh:
+			if cy > ceil(THREADS/cls.box_columns) and n != THREADS:
 				cc += 1; cy = 1; cx = ccw * cc
 				if cc == cls.box_columns: break
 
@@ -1789,67 +1917,73 @@ class MemBox(Box):
 				out_misc += (f'{Mv.to(y-1, x + w - 7)}{THEME.mem_box(Symbol.title_left)}{Fx.b if CONFIG.swap_disk else ""}'
 				f'{THEME.hi_fg("s")}{THEME.title("wap")}{Fx.ub}{THEME.mem_box(Symbol.title_right)}')
 
-
+			if Collector.collect_interrupt: return
 			Draw.buffer("mem_misc", out_misc, only_save=True)
+		try:
+			#* Mem
+			cx = 1; cy = 1
 
-		#* Mem
-		cx = 1; cy = 1
+			out += f'{Mv.to(y, x+1)}{THEME.title}{Fx.b}Total:{mem.string["total"]:>{cls.mem_width - 9}}{Fx.ub}{THEME.main_fg}'
+			if cls.graph_height > 0:
+				gli = f'{Mv.l(2)}{THEME.mem_box(Symbol.title_right)}{THEME.div_line}{Symbol.h_line * (cls.mem_width - 1)}{"" if CONFIG.show_disks else THEME.mem_box}{Symbol.title_left}{Mv.l(cls.mem_width - 1)}{THEME.title}'
+			if cls.graph_height >= 2:
+				gbg = f'{Mv.l(1)}'
+				gmv = f'{Mv.l(cls.mem_width - 2)}{Mv.u(cls.graph_height - 1)}'
 
-		out += f'{Mv.to(y, x+1)}{THEME.title}{Fx.b}Total:{mem.string["total"]:>{cls.mem_width - 9}}{Fx.ub}{THEME.main_fg}'
-		if cls.graph_height > 0:
-			gli = f'{Mv.l(2)}{THEME.mem_box(Symbol.title_right)}{THEME.div_line}{Symbol.h_line * (cls.mem_width - 1)}{"" if CONFIG.show_disks else THEME.mem_box}{Symbol.title_left}{Mv.l(cls.mem_width - 1)}{THEME.title}'
-		if cls.graph_height >= 2:
-			gbg = f'{Mv.l(1)}'
-			gmv = f'{Mv.l(cls.mem_width - 2)}{Mv.u(cls.graph_height - 1)}'
-
-		big_mem: bool = True if cls.mem_width > 21 else False
-		for name in cls.mem_names:
-			if cls.mem_size > 2:
-				out += (f'{Mv.to(y+cy, x+cx)}{gli}{name.capitalize()[:None if big_mem else 5]+":":<{1 if big_mem else 6.6}}{Mv.to(y+cy, x+cx + cls.mem_width - 3 - (len(mem.string[name])))}{Fx.trans(mem.string[name])}'
-						f'{Mv.to(y+cy+1, x+cx)}{gbg}{Meters.mem[name](None if cls.resized else mem.percent[name])}{gmv}{str(mem.percent[name])+"%":>4}')
-				cy += 2 if not cls.graph_height else cls.graph_height + 1
-			else:
-				out += f'{Mv.to(y+cy, x+cx)}{name.capitalize():{5.5 if cls.mem_size > 1 else 1.1}} {gbg}{Meters.mem[name](None if cls.resized else mem.percent[name])}{mem.string[name][:None if cls.mem_size > 1 else -2]:>{9 if cls.mem_size > 1 else 7}}'
-				cy += 1 if not cls.graph_height else cls.graph_height
-		#* Swap
-		if cls.swap_on and CONFIG.show_swap and not CONFIG.swap_disk:
-			if h - cy > 5:
-				if cls.graph_height > 0: out += f'{Mv.to(y+cy, x+cx)}{gli}'
-				cy += 1
-
-			out += f'{Mv.to(y+cy, x+cx)}{THEME.title}{Fx.b}Swap:{mem.swap_string["total"]:>{cls.mem_width - 8}}{Fx.ub}{THEME.main_fg}'
-			cy += 1
-			for name in cls.swap_names:
+			big_mem: bool = cls.mem_width > 21
+			for name in cls.mem_names:
+				if Collector.collect_interrupt: return
 				if cls.mem_size > 2:
-					out += (f'{Mv.to(y+cy, x+cx)}{gli}{name.capitalize()[:None if big_mem else 5]+":":<{1 if big_mem else 6.6}}{Mv.to(y+cy, x+cx + cls.mem_width - 3 - (len(mem.swap_string[name])))}{Fx.trans(mem.swap_string[name])}'
-							f'{Mv.to(y+cy+1, x+cx)}{gbg}{Meters.swap[name](None if cls.resized else mem.swap_percent[name])}{gmv}{str(mem.swap_percent[name])+"%":>4}')
+					out += (f'{Mv.to(y+cy, x+cx)}{gli}{name.capitalize()[:None if big_mem else 5]+":":<{1 if big_mem else 6.6}}{Mv.to(y+cy, x+cx + cls.mem_width - 3 - (len(mem.string[name])))}{Fx.trans(mem.string[name])}'
+							f'{Mv.to(y+cy+1, x+cx)}{gbg}{Meters.mem[name](None if cls.resized else mem.percent[name])}{gmv}{str(mem.percent[name])+"%":>4}')
 					cy += 2 if not cls.graph_height else cls.graph_height + 1
 				else:
-					out += f'{Mv.to(y+cy, x+cx)}{name.capitalize():{5.5 if cls.mem_size > 1 else 1.1}} {gbg}{Meters.swap[name](None if cls.resized else mem.swap_percent[name])}{mem.swap_string[name][:None if cls.mem_size > 1 else -2]:>{9 if cls.mem_size > 1 else 7}}'; cy += 1 if not cls.graph_height else cls.graph_height
-
-		if cls.graph_height > 0 and not cy == h: out += f'{Mv.to(y+cy, x+cx)}{gli}'
-
-		#* Disks
-		if CONFIG.show_disks:
-			cx = x + cls.mem_width - 1; cy = 0
-			big_disk: bool = True if cls.disks_width >= 25 else False
-			gli = f'{Mv.l(2)}{THEME.div_line}{Symbol.title_right}{Symbol.h_line * cls.disks_width}{THEME.mem_box}{Symbol.title_left}{Mv.l(cls.disks_width - 1)}'
-			for name, item in mem.disks.items():
-				if cy > h - 2: break
-				out += Fx.trans(f'{Mv.to(y+cy, x+cx)}{gli}{THEME.title}{Fx.b}{item["name"]:{cls.disks_width - 2}.12}{Mv.to(y+cy, x + cx + cls.disks_width - 11)}{item["total"][:None if big_disk else -2]:>9}')
-				out += f'{Mv.to(y+cy, x + cx + (cls.disks_width // 2) - (len(item["io"]) // 2) - 2)}{Fx.ub}{THEME.main_fg}{item["io"]}{Fx.ub}{THEME.main_fg}{Mv.to(y+cy+1, x+cx)}'
-				out += f'Used:{str(item["used_percent"]) + "%":>4} ' if big_disk else "U "
-				out += f'{Meters.disks_used[name]}{item["used"][:None if big_disk else -2]:>{9 if big_disk else 7}}'
-				cy += 2
-
-				if len(mem.disks) * 3 <= h + 1:
-					if cy > h - 1: break
-					out += Mv.to(y+cy, x+cx)
-					out += f'Free:{str(item["free_percent"]) + "%":>4} ' if big_disk else f'{"F "}'
-					out += f'{Meters.disks_free[name]}{item["free"][:None if big_disk else -2]:>{9 if big_disk else 7}}'
+					out += f'{Mv.to(y+cy, x+cx)}{name.capitalize():{5.5 if cls.mem_size > 1 else 1.1}} {gbg}{Meters.mem[name](None if cls.resized else mem.percent[name])}{mem.string[name][:None if cls.mem_size > 1 else -2]:>{9 if cls.mem_size > 1 else 7}}'
+					cy += 1 if not cls.graph_height else cls.graph_height
+			#* Swap
+			if cls.swap_on and CONFIG.show_swap and not CONFIG.swap_disk and mem.swap_string:
+				if h - cy > 5:
+					if cls.graph_height > 0: out += f'{Mv.to(y+cy, x+cx)}{gli}'
 					cy += 1
-					if len(mem.disks) * 4 <= h + 1: cy += 1
 
+				out += f'{Mv.to(y+cy, x+cx)}{THEME.title}{Fx.b}Swap:{mem.swap_string["total"]:>{cls.mem_width - 8}}{Fx.ub}{THEME.main_fg}'
+				cy += 1
+				for name in cls.swap_names:
+					if Collector.collect_interrupt: return
+					if cls.mem_size > 2:
+						out += (f'{Mv.to(y+cy, x+cx)}{gli}{name.capitalize()[:None if big_mem else 5]+":":<{1 if big_mem else 6.6}}{Mv.to(y+cy, x+cx + cls.mem_width - 3 - (len(mem.swap_string[name])))}{Fx.trans(mem.swap_string[name])}'
+								f'{Mv.to(y+cy+1, x+cx)}{gbg}{Meters.swap[name](None if cls.resized else mem.swap_percent[name])}{gmv}{str(mem.swap_percent[name])+"%":>4}')
+						cy += 2 if not cls.graph_height else cls.graph_height + 1
+					else:
+						out += f'{Mv.to(y+cy, x+cx)}{name.capitalize():{5.5 if cls.mem_size > 1 else 1.1}} {gbg}{Meters.swap[name](None if cls.resized else mem.swap_percent[name])}{mem.swap_string[name][:None if cls.mem_size > 1 else -2]:>{9 if cls.mem_size > 1 else 7}}'; cy += 1 if not cls.graph_height else cls.graph_height
+
+			if cls.graph_height > 0 and not cy == h: out += f'{Mv.to(y+cy, x+cx)}{gli}'
+
+			#* Disks
+			if CONFIG.show_disks and mem.disks:
+				cx = x + cls.mem_width - 1; cy = 0
+				big_disk: bool = cls.disks_width >= 25
+				gli = f'{Mv.l(2)}{THEME.div_line}{Symbol.title_right}{Symbol.h_line * cls.disks_width}{THEME.mem_box}{Symbol.title_left}{Mv.l(cls.disks_width - 1)}'
+				for name, item in mem.disks.items():
+					if Collector.collect_interrupt: return
+					if not name in Meters.disks_used:
+						continue
+					if cy > h - 2: break
+					out += Fx.trans(f'{Mv.to(y+cy, x+cx)}{gli}{THEME.title}{Fx.b}{item["name"]:{cls.disks_width - 2}.12}{Mv.to(y+cy, x + cx + cls.disks_width - 11)}{item["total"][:None if big_disk else -2]:>9}')
+					out += f'{Mv.to(y+cy, x + cx + (cls.disks_width // 2) - (len(item["io"]) // 2) - 2)}{Fx.ub}{THEME.main_fg}{item["io"]}{Fx.ub}{THEME.main_fg}{Mv.to(y+cy+1, x+cx)}'
+					out += f'Used:{str(item["used_percent"]) + "%":>4} ' if big_disk else "U "
+					out += f'{Meters.disks_used[name]}{item["used"][:None if big_disk else -2]:>{9 if big_disk else 7}}'
+					cy += 2
+
+					if len(mem.disks) * 3 <= h + 1:
+						if cy > h - 1: break
+						out += Mv.to(y+cy, x+cx)
+						out += f'Free:{str(item["free_percent"]) + "%":>4} ' if big_disk else f'{"F "}'
+						out += f'{Meters.disks_free[name]}{item["free"][:None if big_disk else -2]:>{9 if big_disk else 7}}'
+						cy += 1
+						if len(mem.disks) * 4 <= h + 1: cy += 1
+		except (KeyError, TypeError):
+			return
 		Draw.buffer(cls.buffer, f'{out_misc}{out}{Term.fg}', only_save=Menu.active)
 		cls.resized = cls.redraw = False
 
@@ -1931,7 +2065,7 @@ class NetBox(Box, SubBox):
 			if cls.redraw: stats["redraw"] = True
 			if stats["redraw"] or cls.resized:
 				Graphs.net[direction] = Graph(w - bw - 3, cls.graph_height[direction], THEME.gradient[direction], stats["speed"], max_value=net.sync_top if CONFIG.net_sync else stats["graph_top"],
-					invert=False if direction == "download" else True, color_max_value=net.net_min.get(direction) if CONFIG.net_color_fixed else None)
+					invert=direction != "download", color_max_value=net.net_min.get(direction) if CONFIG.net_color_fixed else None)
 			out += f'{Mv.to(y if direction == "download" else y + cls.graph_height["download"], x)}{Graphs.net[direction](None if stats["redraw"] else stats["speed"][-1])}'
 
 			out += (f'{Mv.to(by+cy, bx)}{THEME.main_fg}{cls.symbols[direction]} {strings["byte_ps"]:<10.10}' +
@@ -2037,7 +2171,7 @@ class ProcBox(Box):
 			if cls.start < ProcCollector.num_procs - cls.select_max + 1: cls.start = ProcCollector.num_procs - cls.select_max + 1
 			elif cls.selected < cls.select_max: cls.selected = cls.select_max
 		elif key == "mouse_click":
-			if mouse_pos[0] > cls.x + cls.width - 4 and mouse_pos[1] > cls.current_y + 1 and mouse_pos[1] < cls.current_y + 1 + cls.select_max + 1:
+			if mouse_pos[0] > cls.x + cls.width - 4 and cls.current_y + 1 < mouse_pos[1] < cls.current_y + 1 + cls.select_max + 1:
 				if mouse_pos[1] == cls.current_y + 2:
 					cls.start = 1
 				elif mouse_pos[1] == cls.current_y + 1 + cls.select_max:
@@ -2332,7 +2466,7 @@ class ProcBox(Box):
 
 			end = f'{THEME.main_fg}{Fx.ub}' if CONFIG.proc_colors else Fx.ub
 			if cls.selected > cy: calc = cls.selected - cy
-			elif cls.selected > 0 and cls.selected <= cy: calc = cy - cls.selected
+			elif 0 < cls.selected <= cy: calc = cy - cls.selected
 			else: calc = cy
 			if CONFIG.proc_colors and not is_selected:
 				vals = []
@@ -2516,6 +2650,8 @@ class CpuCollector(Collector):
 	buffer: str = CpuBox.buffer
 	sensor_method: str = ""
 	got_sensors: bool = False
+	sensor_swap: bool = False
+	cpu_temp_only: bool = False
 
 	@classmethod
 	def get_sensors(cls):
@@ -2523,9 +2659,13 @@ class CpuCollector(Collector):
 		cls.sensor_method = ""
 		if SYSTEM == "MacOS":
 			try:
-				if which("osx-cpu-temp") and subprocess.check_output("osx-cpu-temp", text=True).rstrip().endswith("°C"):
+				if which("coretemp") and subprocess.check_output(["coretemp", "-p"], text=True).strip().replace("-", "").isdigit():
+					cls.sensor_method = "coretemp"
+				elif which("osx-cpu-temp") and subprocess.check_output("osx-cpu-temp", text=True).rstrip().endswith("°C"):
 					cls.sensor_method = "osx-cpu-temp"
 			except: pass
+		elif CONFIG.cpu_sensor != "Auto" and CONFIG.cpu_sensor in CONFIG.cpu_sensors:
+			cls.sensor_method = "psutil"
 		elif hasattr(psutil, "sensors_temperatures"):
 			try:
 				temps = psutil.sensors_temperatures()
@@ -2544,11 +2684,13 @@ class CpuCollector(Collector):
 				if which("vcgencmd") and subprocess.check_output(["vcgencmd", "measure_temp"], text=True).strip().endswith("'C"):
 					cls.sensor_method = "vcgencmd"
 			except: pass
-		cls.got_sensors = True if cls.sensor_method else False
+		cls.got_sensors = bool(cls.sensor_method)
 
 	@classmethod
 	def _collect(cls):
 		cls.cpu_usage[0].append(round(psutil.cpu_percent(percpu=False)))
+		if len(cls.cpu_usage[0]) > Term.width * 4:
+			del cls.cpu_usage[0][0]
 
 		for n, thread in enumerate(psutil.cpu_percent(percpu=True), start=1):
 			cls.cpu_usage[n].append(round(thread))
@@ -2572,33 +2714,107 @@ class CpuCollector(Collector):
 
 	@classmethod
 	def _collect_temps(cls):
-		temp: int
+		temp: int = 1000
 		cores: List[int] = []
+		core_dict: Dict[int, int] = {}
+		entry_int: int = 0
 		cpu_type: str = ""
+		s_name: str = "_-_"
+		s_label: str = "_-_"
 		if cls.sensor_method == "psutil":
 			try:
 				for name, entries in psutil.sensors_temperatures().items():
-					for entry in entries:
-						if entry.label.startswith(("Package", "Tdie")) and hasattr(entry, "current") and round(entry.current) > 0:
-							cpu_type = "intel" if entry.label.startswith("Package") else "ryzen"
-							if not cls.cpu_temp_high:
-								if hasattr(entry, "high") and entry.high: cls.cpu_temp_high = round(entry.high)
+					for num, entry in enumerate(entries, 1):
+						if CONFIG.cpu_sensor != "Auto":
+							s_name, s_label = CONFIG.cpu_sensor.split(":", 1)
+						if temp == 1000 and name == s_name and (entry.label == s_label or str(num) == s_label) and round(entry.current) > 0:
+							if entry.label.startswith("Package"):
+								cpu_type = "intel"
+							elif entry.label.startswith("Tdie"):
+								cpu_type = "ryzen"
+							else:
+								cpu_type = "other"
+							if not cls.cpu_temp_high or cls.sensor_swap:
+								cls.sensor_swap = False
+								if getattr(entry, "high", None) != None and entry.high > 1: cls.cpu_temp_high = round(entry.high)
 								else: cls.cpu_temp_high = 80
-								if hasattr(entry, "critical") and entry.critical: cls.cpu_temp_crit = round(entry.critical)
+								if getattr(entry, "critical", None) != None and entry.critical > 1: cls.cpu_temp_crit = round(entry.critical)
+								else: cls.cpu_temp_crit = 95
+							temp = round(entry.current)
+						elif temp == 1000 and entry.label.startswith(("Package", "Tdie")) and hasattr(entry, "current") and round(entry.current) > 0:
+							cpu_type = "intel" if entry.label.startswith("Package") else "ryzen"
+							if not cls.cpu_temp_high or cls.sensor_swap:
+								cls.sensor_swap = False
+								if getattr(entry, "high", None) != None and entry.high > 1: cls.cpu_temp_high = round(entry.high)
+								else: cls.cpu_temp_high = 80
+								if getattr(entry, "critical", None) != None and entry.critical > 1: cls.cpu_temp_crit = round(entry.critical)
 								else: cls.cpu_temp_crit = 95
 							temp = round(entry.current)
 						elif (entry.label.startswith(("Core", "Tccd", "CPU")) or (name.lower().startswith("cpu") and not entry.label)) and hasattr(entry, "current") and round(entry.current) > 0:
+							if (cpu_type == "intel" and entry.label.startswith("Core")) or (cpu_type == "ryzen" and entry.label.startswith("Tccd")):
+								entry_int = int(entry.label.replace("Core", "").replace("Tccd", ""))
+								if entry_int in core_dict:
+									continue
+								core_dict[entry_int] = round(entry.current)
+								continue
+							elif cpu_type in ["intel", "ryzen"]:
+								continue
 							if not cpu_type:
 								cpu_type = "other"
-								if not cls.cpu_temp_high:
-									if hasattr(entry, "high") and entry.high: cls.cpu_temp_high = round(entry.high)
+								if not cls.cpu_temp_high or cls.sensor_swap:
+									cls.sensor_swap = False
+									if getattr(entry, "high", None) != None and entry.high > 1: cls.cpu_temp_high = round(entry.high)
 									else: cls.cpu_temp_high = 60 if name == "cpu_thermal" else 80
-									if hasattr(entry, "critical") and entry.critical: cls.cpu_temp_crit = round(entry.critical)
+									if getattr(entry, "critical", None) != None and entry.critical > 1: cls.cpu_temp_crit = round(entry.critical)
 									else: cls.cpu_temp_crit = 80 if name == "cpu_thermal" else 95
 								temp = round(entry.current)
 							cores.append(round(entry.current))
-				if len(cores) < THREADS:
-					if cpu_type == "intel" or (cpu_type == "other" and len(cores) == THREADS // 2):
+				if core_dict:
+					cls.cpu_temp[0].append(temp)
+					if cpu_type == "ryzen":
+						ccds: int = len(core_dict)
+						cores_per_ccd: int = CORES // ccds
+						z: int = 1
+						for x in range(THREADS):
+							if x == CORES:
+								z = 1
+							if CORE_MAP[x] + 1 > cores_per_ccd * z:
+								z += 1
+							cls.cpu_temp[x+1].append(core_dict[z])
+					else:
+						for x in range(THREADS):
+							if not CORE_MAP[x] in core_dict:
+								continue
+							cls.cpu_temp[x+1].append(core_dict[CORE_MAP[x]])
+
+				elif len(cores) == THREADS / 2:
+					cls.cpu_temp[0].append(temp)
+					for n, t in enumerate(cores, start=1):
+						try:
+							cls.cpu_temp[n].append(t)
+							cls.cpu_temp[THREADS // 2 + n].append(t)
+						except IndexError:
+							break
+
+				else:
+					cls.cpu_temp[0].append(temp)
+					if len(cores) > 1:
+						for n, t in enumerate(cores, start=1):
+							try:
+								cls.cpu_temp[n].append(t)
+							except IndexError:
+								break
+			except Exception as e:
+					errlog.exception(f'{e}')
+					cls.got_sensors = False
+					CpuBox._calc_size()
+
+		else:
+			try:
+				if cls.sensor_method == "coretemp":
+					temp = max(0, int(subprocess.check_output(["coretemp", "-p"], text=True).strip()))
+					cores = [max(0, int(x)) for x in subprocess.check_output("coretemp", text=True).split()]
+					if len(cores) == THREADS / 2:
 						cls.cpu_temp[0].append(temp)
 						for n, t in enumerate(cores, start=1):
 							try:
@@ -2606,37 +2822,17 @@ class CpuCollector(Collector):
 								cls.cpu_temp[THREADS // 2 + n].append(t)
 							except IndexError:
 								break
-					elif cpu_type == "ryzen" or cpu_type == "other":
-						cls.cpu_temp[0].append(temp)
-						if len(cores) < 1: cores.append(temp)
-						z = 1
-						for t in cores:
+					else:
+						cores.insert(0, temp)
+						for n, t in enumerate(cores):
 							try:
-								for i in range(THREADS // len(cores)):
-									cls.cpu_temp[z + i].append(t)
-								z += i
+								cls.cpu_temp[n].append(t)
 							except IndexError:
 								break
-					if cls.cpu_temp[0]:
-						for n in range(1, len(cls.cpu_temp)):
-							if len(cls.cpu_temp[n]) != len(cls.cpu_temp[n-1]):
-								cls.cpu_temp[n] = cls.cpu_temp[n//2].copy()
-				else:
-					cores.insert(0, temp)
-					for n, t in enumerate(cores):
-						try:
-							cls.cpu_temp[n].append(t)
-						except IndexError:
-							break
-			except Exception as e:
-					errlog.exception(f'{e}')
-					cls.got_sensors = False
-					#CONFIG.check_temp = False
-					CpuBox._calc_size()
-
-		else:
-			try:
-				if cls.sensor_method == "osx-cpu-temp":
+					if not cls.cpu_temp_high:
+						cls.cpu_temp_high = 85
+						cls.cpu_temp_crit = 100
+				elif cls.sensor_method == "osx-cpu-temp":
 					temp = max(0, round(float(subprocess.check_output("osx-cpu-temp", text=True).strip()[:-2])))
 					if not cls.cpu_temp_high:
 						cls.cpu_temp_high = 85
@@ -2649,18 +2845,17 @@ class CpuCollector(Collector):
 			except Exception as e:
 					errlog.exception(f'{e}')
 					cls.got_sensors = False
-					#CONFIG.check_temp = False
 					CpuBox._calc_size()
 			else:
-				for n in range(THREADS + 1):
-					cls.cpu_temp[n].append(temp)
+				if not cores:
+					cls.cpu_temp[0].append(temp)
 
+		if not core_dict and len(cores) <= 1:
+			cls.cpu_temp_only = True
 		if len(cls.cpu_temp[0]) > 5:
 			for n in range(len(cls.cpu_temp)):
-				del cls.cpu_temp[n][0]
-
-
-
+				if cls.cpu_temp[n]:
+					del cls.cpu_temp[n][0]
 
 	@classmethod
 	def _draw(cls):
@@ -2760,7 +2955,7 @@ class MemCollector(Collector):
 				filtering = tuple(v.strip() for v in CONFIG.disks_filter.strip().split(","))
 
 		try:
-			io_counters = psutil.disk_io_counters(perdisk=True if SYSTEM == "Linux" else False, nowrap=True)
+			io_counters = psutil.disk_io_counters(perdisk=SYSTEM == "Linux", nowrap=True)
 		except ValueError as e:
 			if not cls.io_error:
 				cls.io_error = True
@@ -3083,7 +3278,7 @@ class ProcCollector(Collector):
 
 				out[p.info["pid"]] = {
 					"name" : p.info["name"],
-					"cmd" : cmd,
+					"cmd" : cmd.replace("\n", "").replace("\t", "").replace("\\", ""),
 					"threads" : p.info["num_threads"],
 					"username" : p.info["username"],
 					"mem" : mem,
@@ -3250,7 +3445,7 @@ class ProcCollector(Collector):
 				if pid in cls.collapsed:
 					collapse = cls.collapsed[pid]
 				else:
-					collapse = True if depth > 3 else False
+					collapse = depth > CONFIG.tree_depth
 					cls.collapsed[pid] = collapse
 
 				if collapse_to and not search:
@@ -3265,7 +3460,7 @@ class ProcCollector(Collector):
 					out[pid] = {
 						"indent" : inindent,
 						"name": name,
-						"cmd" : cmd,
+						"cmd" : cmd.replace("\n", "").replace("\t", "").replace("\\", ""),
 						"threads" : threads,
 						"username" : username,
 						"mem" : mem,
@@ -3377,7 +3572,7 @@ class Menu:
 				if Key.mouse_moved():
 					mx, my = Key.get_mouse()
 					for name, pos in mouse_items.items():
-						if mx >= pos["x1"] and mx <= pos["x2"] and my >= pos["y1"] and my <= pos["y2"]:
+						if pos["x1"] <= mx <= pos["x2"] and pos["y1"] <= my <= pos["y2"]:
 							mouse_over = True
 							if name != menu_current:
 								menu_current = name
@@ -3421,7 +3616,7 @@ class Menu:
 				skip = True
 			else:
 				Collector.collect()
-				Collector.collect_done.wait(1)
+				Collector.collect_done.wait(2)
 				if CONFIG.background_update: cls.background = f'{THEME.inactive_fg}' + Fx.uncolor(f'{Draw.saved_buffer()}') + f'{Term.fg}'
 				Timer.stamp()
 
@@ -3438,7 +3633,7 @@ class Menu:
 		redraw: bool = True
 		key: str = ""
 		skip: bool = False
-		main_active: bool = True if cls.active else False
+		main_active: bool = cls.active
 		cls.active = True
 		cls.resized = True
 		if not cls.background:
@@ -3522,10 +3717,10 @@ class Menu:
 
 				if key == "mouse_click":
 					mx, my = Key.get_mouse()
-					if mx >= x and mx < x + w and my >= y and my < y + h + 3:
-						if pages and my == y and mx > x + 56 and mx < x + 61:
+					if x <= mx < x + w and y <= my < y + h + 3:
+						if pages and my == y and x + 56 <  mx < x + 61:
 							key = "up"
-						elif pages and my == y and mx > x + 63 and mx < x + 68:
+						elif pages and my == y and x + 63 < mx < x + 68:
 							key = "down"
 					else:
 						key = "escape"
@@ -3548,7 +3743,7 @@ class Menu:
 				skip = True
 			else:
 				Collector.collect()
-				Collector.collect_done.wait(1)
+				Collector.collect_done.wait(2)
 				if CONFIG.background_update: cls.background = f'{THEME.inactive_fg}' + Fx.uncolor(f'{Draw.saved_buffer()}') + f'{Term.fg}'
 				Timer.stamp()
 
@@ -3567,7 +3762,7 @@ class Menu:
 		redraw: bool = True
 		key: str = ""
 		skip: bool = False
-		main_active: bool = True if cls.active else False
+		main_active: bool = cls.active
 		cls.active = True
 		cls.resized = True
 		d_quote: str
@@ -3628,6 +3823,11 @@ class Menu:
 				'Set true to show processes grouped by parents,',
 				'with lines drawn between parent and child',
 				'process.'],
+			"tree_depth" : [
+				'Process tree auto collapse depth.',
+				'',
+				'Sets the depth were the tree view will auto',
+				'collapse processes at.'],
 			"proc_colors" : [
 				'Enable colors in process view.',
 				'',
@@ -3656,17 +3856,32 @@ class Menu:
 				'Enable cpu temperature reporting.',
 				'',
 				'True or False.'],
+			"cpu_sensor" : [
+				'Cpu temperature sensor',
+				'',
+				'Select the sensor that corresponds to',
+				'your cpu temperature.',
+				'Set to "Auto" for auto detection.'],
+			"show_coretemp" : [
+				'Show temperatures for cpu cores.',
+				'',
+				'Only works if check_temp is True and',
+				'the system is reporting core temps.'],
 			"draw_clock" : [
 				'Draw a clock at top of screen.',
 				'',
 				'Formatting according to strftime, empty',
 				'string to disable.',
 				'',
-				'Examples:',
-				'"%X" locale HH:MM:SS',
-				'"%H" 24h hour, "%I" 12h hour',
-				'"%M" minute, "%S" second',
-				'"%d" day, "%m" month, "%y" year'],
+				'Custom formatting options:',
+				'"/host" = hostname',
+				'"/user" = username',
+				'',
+				'Examples of strftime formats:',
+				'"%X" = locale HH:MM:SS',
+				'"%H" = 24h hour, "%I" = 12h hour',
+				'"%M" = minute, "%S" = second',
+				'"%d" = day, "%m" = month, "%y" = year'],
 			"background_update" : [
 				'Update main ui when menus are showing.',
 				'',
@@ -3752,6 +3967,11 @@ class Menu:
 				'The bandwidth usage is based on the',
 				'"net_download" and "net_upload" values set',
 				'above.'],
+			"show_battery" : [
+				'Show battery stats.',
+				'',
+				'Show battery stats in the top right corner',
+				'if a battery is present.'],
 			"show_init" : [
 				'Show init screen at startup.',
 				'',
@@ -3773,6 +3993,7 @@ class Menu:
 		sorting_i: int = CONFIG.sorting_options.index(CONFIG.proc_sorting)
 		loglevel_i: int = CONFIG.log_levels.index(CONFIG.log_level)
 		view_mode_i: int = CONFIG.view_modes.index(CONFIG.view_mode)
+		cpu_sensor_i: int = CONFIG.cpu_sensors.index(CONFIG.cpu_sensor)
 		color_i: int
 		while not cls.close:
 			key = ""
@@ -3819,11 +4040,13 @@ class Menu:
 						counter = f' {loglevel_i + 1}/{len(CONFIG.log_levels)}'
 					elif opt == "view_mode":
 						counter = f' {view_mode_i + 1}/{len(CONFIG.view_modes)}'
+					elif opt == "cpu_sensor":
+						counter = f' {cpu_sensor_i + 1}/{len(CONFIG.cpu_sensors)}'
 					else:
 						counter = ""
 					out += f'{Mv.to(y+1+cy, x+1)}{t_color}{Fx.b}{opt.replace("_", " ").capitalize() + counter:^24.24}{Fx.ub}{Mv.to(y+2+cy, x+1)}{v_color}'
 					if opt == selected:
-						if isinstance(value, bool) or opt in ["color_theme", "proc_sorting", "log_level", "view_mode"]:
+						if isinstance(value, bool) or opt in ["color_theme", "proc_sorting", "log_level", "view_mode", "cpu_sensor"]:
 							out += f'{t_color} {Symbol.left}{v_color}{d_quote + str(value) + d_quote:^20.20}{t_color}{Symbol.right} '
 						elif inputting:
 							out += f'{str(input_val)[-17:] + Fx.bl + "█" + Fx.ubl + "" + Symbol.enter:^33.33}'
@@ -3857,11 +4080,11 @@ class Menu:
 				has_sel = False
 				if key == "mouse_click" and not inputting:
 					mx, my = Key.get_mouse()
-					if mx > x and mx < x + w and my > y and my < y + h + 2:
+					if x < mx < x + w and y < my < y + h + 2:
 						mouse_sel = ceil((my - y) / 2) - 1 + ceil((page-1) * (h / 2))
-						if pages and my == y+h+1 and mx > x+11 and mx < x+16:
+						if pages and my == y+h+1 and x+11 < mx < x+16:
 							key = "page_up"
-						elif pages and my == y+h+1 and mx > x+19 and mx < x+24:
+						elif pages and my == y+h+1 and x+19 < mx < x+24:
 							key = "page_down"
 						elif my == y+h+1:
 							pass
@@ -3890,16 +4113,22 @@ class Menu:
 									CONFIG.update_ms = 86399900
 								else:
 									CONFIG.update_ms = int(input_val)
+							elif selected == "tree_depth":
+								if not input_val or int(input_val) < 0:
+									CONFIG.tree_depth = 0
+								else:
+									CONFIG.tree_depth = int(input_val)
+								ProcCollector.collapsed = {}
 							elif isinstance(getattr(CONFIG, selected), str):
 								setattr(CONFIG, selected, input_val)
 								if selected.startswith("net_"):
 									NetCollector.net_min = {"download" : -1, "upload" : -1}
 								elif selected == "draw_clock":
-									Box.clock_on = True if len(CONFIG.draw_clock) > 0 else False
+									Box.clock_on = len(CONFIG.draw_clock) > 0
 									if not Box.clock_on: Draw.clear("clock", saved=True)
 							Term.refresh(force=True)
 							cls.resized = False
-					elif key == "backspace" and len(input_val) > 0:
+					elif key == "backspace" and len(input_val):
 						input_val = input_val[:-1]
 					elif key == "delete":
 							input_val = ""
@@ -3907,13 +4136,12 @@ class Menu:
 						input_val += key
 					elif isinstance(getattr(CONFIG, selected), int) and key.isdigit():
 						input_val += key
-
 				elif key == "q":
 					clean_quit()
 				elif key in ["escape", "o", "M", "f2"]:
 					cls.close = True
 					break
-				elif key == "enter" and selected in ["update_ms", "disks_filter", "custom_cpu_name", "net_download", "net_upload", "draw_clock"]:
+				elif key == "enter" and selected in ["update_ms", "disks_filter", "custom_cpu_name", "net_download", "net_upload", "draw_clock", "tree_depth"]:
 					inputting = True
 					input_val = str(getattr(CONFIG, selected))
 				elif key == "left" and selected == "update_ms" and CONFIG.update_ms - 100 >= 100:
@@ -3922,6 +4150,12 @@ class Menu:
 				elif key == "right" and selected == "update_ms" and CONFIG.update_ms + 100 <= 86399900:
 					CONFIG.update_ms += 100
 					Box.draw_update_ms()
+				elif key == "left" and selected == "tree_depth" and CONFIG.tree_depth > 0:
+					CONFIG.tree_depth -= 1
+					ProcCollector.collapsed = {}
+				elif key == "right" and selected == "tree_depth":
+					CONFIG.tree_depth += 1
+					ProcCollector.collapsed = {}
 				elif key in ["left", "right"] and isinstance(getattr(CONFIG, selected), bool):
 					setattr(CONFIG, selected, not getattr(CONFIG, selected))
 					if selected == "check_temp":
@@ -3936,6 +4170,8 @@ class Menu:
 					if selected == "theme_background":
 						Term.bg = THEME.main_bg if CONFIG.theme_background else "\033[49m"
 						Draw.now(Term.bg)
+					if selected == "show_battery":
+						Draw.clear("battery", saved=True)
 					Term.refresh(force=True)
 					cls.resized = False
 				elif key in ["left", "right"] and selected == "color_theme" and len(Theme.themes) > 1:
@@ -3945,6 +4181,7 @@ class Menu:
 					elif key == "right":
 						color_i += 1
 						if color_i > len(Theme.themes) - 1: color_i = 0
+					Collector.collect_idle.wait()
 					CONFIG.color_theme = list(Theme.themes)[color_i]
 					THEME(CONFIG.color_theme)
 					Term.refresh(force=True)
@@ -3961,6 +4198,20 @@ class Menu:
 					CONFIG.log_level = CONFIG.log_levels[loglevel_i]
 					errlog.setLevel(getattr(logging, CONFIG.log_level))
 					errlog.info(f'Loglevel set to {CONFIG.log_level}')
+				elif key in ["left", "right"] and selected == "cpu_sensor" and len(CONFIG.cpu_sensors) > 1:
+					if key == "left":
+						cpu_sensor_i -= 1
+						if cpu_sensor_i < 0: cpu_sensor_i = len(CONFIG.cpu_sensors) - 1
+					elif key == "right":
+						cpu_sensor_i += 1
+						if cpu_sensor_i > len(CONFIG.cpu_sensors) - 1: cpu_sensor_i = 0
+					Collector.collect_idle.wait()
+					CpuCollector.sensor_swap = True
+					CONFIG.cpu_sensor = CONFIG.cpu_sensors[cpu_sensor_i]
+					if CONFIG.check_temp and (CpuCollector.sensor_method != "psutil" or CONFIG.cpu_sensor == "Auto"):
+						CpuCollector.get_sensors()
+						Term.refresh(force=True)
+						cls.resized = False
 				elif key in ["left", "right"] and selected == "view_mode":
 					if key == "left":
 						view_mode_i -= 1
@@ -3969,8 +4220,8 @@ class Menu:
 						view_mode_i += 1
 						if view_mode_i > len(CONFIG.view_modes) - 1: view_mode_i = 0
 					CONFIG.view_mode = CONFIG.view_modes[view_mode_i]
-					Box.proc_mode = True if CONFIG.view_mode == "proc" else False
-					Box.stat_mode = True if CONFIG.view_mode == "stat" else False
+					Box.proc_mode = CONFIG.view_mode == "proc"
+					Box.stat_mode = CONFIG.view_mode == "stat"
 					if ARG_MODE:
 						ARG_MODE = ""
 					Draw.clear(saved=True)
@@ -4001,7 +4252,7 @@ class Menu:
 				skip = True
 			else:
 				Collector.collect()
-				Collector.collect_done.wait(1)
+				Collector.collect_done.wait(2)
 				if CONFIG.background_update: cls.background = f'{THEME.inactive_fg}' + Fx.uncolor(f'{Draw.saved_buffer()}') + f'{Term.fg}'
 				Timer.stamp()
 
@@ -4026,10 +4277,7 @@ class Timer:
 		if cls.return_zero:
 			cls.return_zero = False
 			return False
-		if cls.timestamp + (CONFIG.update_ms / 1000) > time():
-			return True
-		else:
-			return False
+		return cls.timestamp + (CONFIG.update_ms / 1000) > time()
 
 	@classmethod
 	def left(cls) -> float:
@@ -4161,18 +4409,50 @@ def get_cpu_name() -> str:
 	else:
 		name = cmd_out
 	nlist = name.split(" ")
-	if "Xeon" in name and "CPU" in name:
-		name = nlist[nlist.index("CPU")+1]
-	elif "Ryzen" in name:
-		name = " ".join(nlist[nlist.index("Ryzen"):nlist.index("Ryzen")+3])
-	elif "Duo" in name and "@" in name:
-		name = " ".join(nlist[:nlist.index("@")])
-	elif "CPU" in name and not nlist[0] == "CPU":
-		name = nlist[nlist.index("CPU")-1]
+	try:
+		if "Xeon" in name and "CPU" in name:
+			name = nlist[nlist.index("CPU")+(-1 if name.endswith(("CPU", "z")) else 1)]
+		elif "Ryzen" in name:
+			name = " ".join(nlist[nlist.index("Ryzen"):nlist.index("Ryzen")+3])
+		elif "Duo" in name and "@" in name:
+			name = " ".join(nlist[:nlist.index("@")])
+		elif "CPU" in name and not nlist[0] == "CPU" and not nlist[nlist.index("CPU")-1].isdigit():
+			name = nlist[nlist.index("CPU")-1]
+	except:
+		pass
 
+	name = name.replace("Processor", "").replace("CPU", "").replace("(R)", "").replace("(TM)", "").replace("Intel", "")
+	name = re.sub(r"\d?\.?\d+[mMgG][hH][zZ]", "", name)
 	name = " ".join(name.split())
 
-	return name.replace("Processor ", "").replace("CPU ", "").replace("(R)", "").replace("(TM)", "").replace("Intel ", "")
+	return name
+
+def get_cpu_core_mapping() -> List[int]:
+	mapping: List[int] = []
+
+	if SYSTEM == "Linux" and os.path.isfile("/proc/cpuinfo"):
+		try:
+			mapping = [0] * THREADS
+			num = 0
+			with open("/proc/cpuinfo", "r") as f:
+				for line in f:
+					if line.startswith("processor"):
+						num = int(line.strip()[(line.index(": ")+2):])
+						if num > THREADS - 1:
+							break
+					elif line.startswith("core id"):
+						mapping[num] = int(line.strip()[(line.index(": ")+2):])
+			if num < THREADS - 1:
+				raise Exception
+		except:
+			mapping = []
+
+	if not mapping:
+		mapping = []
+		for _ in range(THREADS // CORES):
+			mapping.extend([x for x in range(CORES)])
+
+	return mapping
 
 def create_box(x: int = 0, y: int = 0, width: int = 0, height: int = 0, title: str = "", title2: str = "", line_color: Color = None, title_color: Color = None, fill: bool = True, box = None) -> str:
 	'''Create a box from a box object or by given arguments'''
@@ -4279,9 +4559,10 @@ def floating_humanizer(value: Union[float, int], bit: bool = False, per_second: 
 			break
 		selector += 1
 	else:
-		if len(f'{value}') < 5 and len(f'{value}') >= 2 and selector > 0:
-			decimals = 5 - len(f'{value}')
-			out = f'{value}'[:-2] + "." + f'{value}'[-decimals:]
+		if len(f'{value}') == 4 and selector > 0:
+			out = f'{value}'[:-2] + "." + f'{value}'[-2]
+		elif len(f'{value}') == 3 and selector > 0:
+			out = f'{value}'[:-2] + "." + f'{value}'[-2:]
 		elif len(f'{value}') >= 2:
 			out = f'{value}'[:-2]
 		else:
@@ -4289,7 +4570,8 @@ def floating_humanizer(value: Union[float, int], bit: bool = False, per_second: 
 
 
 	if short:
-		out = out.split(".")[0]
+		if "." in out:
+			out = f'{round(float(out))}'
 		if len(out) > 3:
 			out = f'{int(out[0]) + 1}'
 			selector += 1
@@ -4336,6 +4618,16 @@ def units_to_bytes(value: str) -> int:
 def min_max(value: int, min_value: int=0, max_value: int=100) -> int:
 	return max(min_value, min(value, max_value))
 
+def readfile(file: str, default: str = "") -> str:
+	out: Union[str, None] = None
+	if os.path.isfile(file):
+		try:
+			with open(file, "r") as f:
+				out = f.read().strip()
+		except:
+			pass
+	return default if out is None else out
+
 def process_keys():
 	mouse_pos: Tuple[int, int] = (0, 0)
 	filtered: bool = False
@@ -4344,7 +4636,7 @@ def process_keys():
 		key = Key.get()
 		if key in ["mouse_scroll_up", "mouse_scroll_down", "mouse_click"]:
 			mouse_pos = Key.get_mouse()
-			if mouse_pos[0] >= ProcBox.x and mouse_pos[1] >= ProcBox.current_y + 1 and mouse_pos[1] < ProcBox.current_y + ProcBox.current_h - 1:
+			if mouse_pos[0] >= ProcBox.x and ProcBox.current_y + 1 <= mouse_pos[1] < ProcBox.current_y + ProcBox.current_h - 1:
 				pass
 			elif key == "mouse_click":
 				key = "mouse_unselect"
@@ -4418,6 +4710,7 @@ def process_keys():
 			CONFIG.mem_graphs = not CONFIG.mem_graphs
 			Collector.collect(MemCollector, interrupt=True, redraw=True)
 		elif key == "s":
+			Collector.collect_idle.wait()
 			CONFIG.swap_disk = not CONFIG.swap_disk
 			Collector.collect(MemCollector, interrupt=True, redraw=True)
 		elif key == "f":
@@ -4431,16 +4724,16 @@ def process_keys():
 				CONFIG.view_mode = CONFIG.view_modes[0]
 			else:
 				CONFIG.view_mode = CONFIG.view_modes[(CONFIG.view_modes.index(CONFIG.view_mode) + 1)]
-			Box.proc_mode = True if CONFIG.view_mode == "proc" else False
-			Box.stat_mode = True if CONFIG.view_mode == "stat" else False
+			Box.proc_mode = CONFIG.view_mode == "proc"
+			Box.stat_mode = CONFIG.view_mode == "stat"
 			Draw.clear(saved=True)
 			Term.refresh(force=True)
 		elif key.lower() in ["t", "k", "i"] and (ProcBox.selected > 0 or ProcCollector.detailed):
 			pid: int = ProcBox.selected_pid if ProcBox.selected > 0 else ProcCollector.detailed_pid # type: ignore
 			if psutil.pid_exists(pid):
-				if key == "t": sig = signal.SIGTERM
-				elif key == "k": sig = signal.SIGKILL
-				elif key == "i": sig = signal.SIGINT
+				if key.lower() == "t": sig = signal.SIGTERM
+				elif key.lower() == "k": sig = signal.SIGKILL
+				elif key.lower() == "i": sig = signal.SIGINT
 				try:
 					os.kill(pid, sig)
 				except Exception as e:
@@ -4479,6 +4772,8 @@ def process_keys():
 
 
 CPU_NAME: str = get_cpu_name()
+
+CORE_MAP: List[int] = get_cpu_core_mapping()
 
 THEME: Theme
 

@@ -1,5 +1,9 @@
 # ![bpytop](https://github.com/aristocratos/bpytop/raw/master/Imgs/logo.png)
 
+<a href="https://repology.org/project/bpytop/versions">
+    <img src="https://repology.org/badge/vertical-allrepos/bpytop.svg" alt="Packaging status" align="right">
+</a>
+
 ![Linux](https://img.shields.io/badge/-Linux-grey?logo=linux)
 ![OSX](https://img.shields.io/badge/-OSX-black?logo=apple)
 ![FreeBSD](https://img.shields.io/badge/-FreeBSD-red?logo=freebsd)
@@ -96,7 +100,19 @@ Also needs a UTF8 locale and a font that covers:
 * Unicode Block “Geometric Shapes” U+25A0 - U+25FF
 * Unicode Block "Box Drawing" and "Block Elements" U+2500 - U+259F
 
-#### Notice
+#### Notice (Text rendering issues)
+
+If you are having problems with the characters in the graphs not looking like they do in the screenshots,
+it's likely a problem with your systems configured fallback font not having support for braille characters.
+
+See comments by @sgleizes [link](https://github.com/aristocratos/bpytop/issues/100#issuecomment-684036827) and @XenHat [link](https://github.com/aristocratos/bpytop/issues/100#issuecomment-691585587) in issue #100 for possible solutions.
+
+If text are misaligned and you are using Konsole or Yakuake, turning off "Bi-Directional text rendering" is a possible fix.
+
+Characters clipping in to each other or text/border misalignments is not bugs caused by bpytop, but most likely a fontconfig or terminal problem where the braille characters making up the graphs aren't rendered correctly.
+Look to the creators of the terminal emulator you use to fix these issues if the previous mentioned fixes don't work for you.
+
+#### Notice (SSH)
 
 Dropbear seems to not be able to set correct locale. So if accessing bpytop over ssh, OpenSSH is recommended.
 
@@ -108,7 +124,7 @@ Dropbear seems to not be able to set correct locale. So if accessing bpytop over
 
 ## Optionals for additional stats
 
-(Optional OSX) **[osx-cpu-temp](https://github.com/lavoiesl/osx-cpu-temp)** Needed to show CPU temperatures.
+(Optional OSX) **[coretemp](https://github.com/hacker1024/coretemp)** (recommended), or **[osx-cpu-temp](https://github.com/lavoiesl/osx-cpu-temp)** (less accurate) needed to show CPU temperatures.
 
 ## Screenshots
 
@@ -135,11 +151,13 @@ pip3 install bpytop --upgrade
 
 ### Arch Linux
 
-Available in the AUR as `bpytop.git`
+Available in the AUR as `bpytop`
 
 https://aur.archlinux.org/packages/bpytop/
 
 ### Debian based
+
+Available in [official Debian repository](https://tracker.debian.org/pkg/bpytop) since Debian 11
 
 Available for debian/ubuntu from [Azlux's repository](http://packages.azlux.fr/)
 
@@ -162,6 +180,23 @@ sudo pkg install bpytop
 ``` bash
 sudo dnf install bpytop
 ```
+
+### Gentoo / Calculate Linux
+
+Available from [adrien-overlay](https://github.com/aaaaadrien/adrien-overlay)
+
+>Installation
+
+``` bash
+sudo emerge -av sys-process/bpytop
+```
+
+### MX Linux
+
+Available in the MX Test Repo as `bpytop`
+Please use MX Package Installer MX Test Repo tab to install.
+
+http://mxrepo.com/mx/testrepo/pool/test/b/bpytop/
 
 ### Snap package
 
@@ -218,7 +253,11 @@ brew install python3 git
 python3 -m pip install psutil
 ```
 
->Install optional dependency osx-cpu-temp
+>Install optional dependency coretemp (recommended), or osx-cpu-temp (less accurate)
+
+``` bash
+brew install hacker1024/hacker1024/coretemp
+```
 
 ``` bash
 brew install osx-cpu-temp
