@@ -11,9 +11,12 @@
 ![Python](https://img.shields.io/badge/Python-v3.6%5E-green?logo=python)
 ![bpytop_version](https://img.shields.io/github/v/tag/aristocratos/bpytop?label=version)
 [![pypi_version](https://img.shields.io/pypi/v/bpytop?label=pypi)](https://pypi.org/project/bpytop)
+[![Build Status](https://travis-ci.com/aristocratos/bpytop.svg?branch=master)](https://travis-ci.com/aristocratos/bpytop)
 [![Donate](https://img.shields.io/badge/-Donate-yellow?logo=paypal)](https://paypal.me/aristocratos)
 [![Sponsor](https://img.shields.io/badge/-Sponsor-red?logo=github)](https://github.com/sponsors/aristocratos)
 [![Coffee](https://img.shields.io/badge/-Buy%20me%20a%20Coffee-grey?logo=Ko-fi)](https://ko-fi.com/aristocratos)
+
+[![bpytop](https://img.shields.io/badge/-snapcraft.io-black)](https://snapcraft.io/bpytop)[![bpytop](https://snapcraft.io//bpytop/badge.svg)](https://snapcraft.io/bpytop)
 
 ## Index
 
@@ -105,6 +108,8 @@ Also needs a UTF8 locale and a font that covers:
 If you are having problems with the characters in the graphs not looking like they do in the screenshots,
 it's likely a problem with your systems configured fallback font not having support for braille characters.
 
+See [Terminess Powerline](https://github.com/ryanoasis/nerd-fonts/tree/master/patched-fonts/Terminus/terminus-ttf-4.40.1) for an example of a font that includes the braille symbols.
+
 See comments by @sgleizes [link](https://github.com/aristocratos/bpytop/issues/100#issuecomment-684036827) and @XenHat [link](https://github.com/aristocratos/bpytop/issues/100#issuecomment-691585587) in issue #100 for possible solutions.
 
 If text are misaligned and you are using Konsole or Yakuake, turning off "Bi-Directional text rendering" is a possible fix.
@@ -159,6 +164,12 @@ https://aur.archlinux.org/packages/bpytop/
 
 Available in [official Debian repository](https://tracker.debian.org/pkg/bpytop) since Debian 11
 
+>Installation
+
+```bash
+sudo apt install bpytop
+```
+
 Available for debian/ubuntu from [Azlux's repository](http://packages.azlux.fr/)
 
 ### FreeBSD package
@@ -189,6 +200,17 @@ Available from [adrien-overlay](https://github.com/aaaaadrien/adrien-overlay)
 
 ``` bash
 sudo emerge -av sys-process/bpytop
+```
+
+### Mageia Cauldron (Mageia 8)
+
+Available in Mageia Cauldron and then Mageia 8 when it is released.
+
+>Installation
+
+``` bash
+sudo urpmi bpytop
+sudo dnf install bpytop
 ```
 
 ### MX Linux

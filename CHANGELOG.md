@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.0.50
+
+* Fixed: Correction for missing coretemp values
+* Fixed: Cpu temp calculation from cores if missing and better multi cpu temp support
+* Added: New theme dusklight, by @drazil100
+
+## v1.0.49
+
+* Fixed: Missing default values for cpu temp high and crit
+
+## v1.0.48
+
+* Added: Sync clock to timer if timer = 1000ms
+* Fixed: Wrong coretemp mapping when missing package id 0
+* Fixed: Sizing when coretemp is hidden
+* Added: Link to Terminess Powerline with included braille symbols in README.md
+
+## v1.0.47
+
+* Added: Testing, by @ErwinJunge
+* Added: Theme matcha-dark-sea, by @TheCynicalLiger
+* Fixed: New type errors for mypy v 0.790
+* Added: pylint and mypy test with tox, by @ErwinJunge
+
+## v1.0.46
+
+* Changed: psutil update to 5.7.3 in pypi package
+* Fixed: Better sensor and temperature detection
+
 ## v1.0.45
 
 * Fixed: Missing temps if high or crit is None, by @TheComputerGuy96

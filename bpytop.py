@@ -55,7 +55,7 @@ if errors:
 		print("\nInstall required modules!\n")
 	raise SystemExit(1)
 
-VERSION: str = "1.0.45"
+VERSION: str = "1.0.50"
 
 #? Argument parser ------------------------------------------------------------------------------->
 args = argparse.ArgumentParser()
@@ -934,7 +934,7 @@ class Draw:
 		out: str = ""
 		if not cls.strings: return
 		if names:
-			for name in sorted(cls.z_order, key=cls.z_order.get, reverse=True):
+			for name in sorted(cls.z_order, key=cls.z_order.get, reverse=True): #type: ignore
 				if name in names and name in cls.strings:
 					out += cls.strings[name]
 					if cls.save[name]:
@@ -943,7 +943,7 @@ class Draw:
 						cls.clear(name)
 			cls.now(out)
 		else:
-			for name in sorted(cls.z_order, key=cls.z_order.get, reverse=True):
+			for name in sorted(cls.z_order, key=cls.z_order.get, reverse=True): #type: ignore
 				if name in cls.strings:
 					out += cls.strings[name]
 					if cls.save[name]:
@@ -957,7 +957,7 @@ class Draw:
 	@classmethod
 	def saved_buffer(cls) -> str:
 		out: str = ""
-		for name in sorted(cls.z_order, key=cls.z_order.get, reverse=True):
+		for name in sorted(cls.z_order, key=cls.z_order.get, reverse=True): #type: ignore
 			if name in cls.saved:
 				out += cls.saved[name]
 		return out
@@ -1104,7 +1104,7 @@ class Theme:
 	cached: Dict[str, Dict[str, str]] = { "Default" : DEFAULT_THEME }
 	current: str = ""
 
-	main_bg = main_fg = title = hi_fg = selected_bg = selected_fg = inactive_fg = proc_misc = cpu_box = mem_box = net_box = proc_box = div_line = temp_start = temp_mid = temp_end = cpu_start = cpu_mid = cpu_end = free_start = free_mid = free_end = cached_start = cached_mid = cached_end = available_start = available_mid = available_end = used_start = used_mid = used_end = download_start = download_mid = download_end = upload_start = upload_mid = upload_end = graph_text = meter_bg = process_start = process_mid = process_end = NotImplemented
+	main_bg = main_fg = title = hi_fg = selected_bg = selected_fg = inactive_fg = proc_misc = cpu_box = mem_box = net_box = proc_box = div_line = temp_start = temp_mid = temp_end = cpu_start = cpu_mid = cpu_end = free_start = free_mid = free_end = cached_start = cached_mid = cached_end = available_start = available_mid = available_end = used_start = used_mid = used_end = download_start = download_mid = download_end = upload_start = upload_mid = upload_end = graph_text = meter_bg = process_start = process_mid = process_end = Colors.default
 
 	gradient: Dict[str, List[str]] = {
 		"temp" : [],
@@ -1182,8 +1182,8 @@ class Theme:
 				c = Color.fg(*rgb["start"])
 				self.gradient[name] += [c] * 101
 		#* Set terminal colors
-		Term.fg = self.main_fg
-		Term.bg = self.main_bg if CONFIG.theme_background else "\033[49m"
+		Term.fg = f'{self.main_fg}'
+		Term.bg = f'{self.main_bg}' if CONFIG.theme_background else "\033[49m"
 		Draw.now(self.main_fg, self.main_bg)
 
 	@classmethod
@@ -1690,6 +1690,7 @@ class CpuBox(Box, SubBox):
 		bx, by, bw, bh = cls.box_x + 1, cls.box_y + 1, cls.box_width - 2, cls.box_height - 2
 		hh: int = ceil(h / 2)
 		hide_cores: bool = (cpu.cpu_temp_only or not CONFIG.show_coretemp) and cpu.got_sensors
+		ct_width: int = (max(6, 6 * cls.column_size)) * hide_cores
 
 		if cls.resized or cls.redraw:
 			if not "m" in Key.mouse:
@@ -1698,9 +1699,9 @@ class CpuBox(Box, SubBox):
 			Graphs.cpu["up"] = Graph(w - bw - 3, hh, THEME.gradient["cpu"], cpu.cpu_usage[0])
 			Graphs.cpu["down"] = Graph(w - bw - 3, h - hh, THEME.gradient["cpu"], cpu.cpu_usage[0], invert=True)
 			Meters.cpu = Meter(cpu.cpu_usage[0][-1], bw - (21 if cpu.got_sensors else 9), "cpu")
-			if cls.column_size > 0:
+			if cls.column_size > 0 or ct_width > 0:
 				for n in range(THREADS):
-					Graphs.cores[n] = Graph(5 * cls.column_size + (12 * hide_cores), 1, None, cpu.cpu_usage[n + 1])
+					Graphs.cores[n] = Graph(5 * cls.column_size + ct_width, 1, None, cpu.cpu_usage[n + 1])
 			if cpu.got_sensors:
 				Graphs.temps[0] = Graph(5, 1, None, cpu.cpu_temp[0], max_value=cpu.cpu_temp_crit, offset=-23)
 				if cls.column_size > 1:
@@ -1754,8 +1755,8 @@ class CpuBox(Box, SubBox):
 		cy += 1
 		for n in range(1, THREADS + 1):
 			out += f'{THEME.main_fg}{Mv.to(by + cy, bx + cx)}{Fx.b + "C" + Fx.ub if THREADS < 100 else ""}{str(n):<{2 if cls.column_size == 0 else 3}}'
-			if cls.column_size > 0:
-				out += f'{THEME.inactive_fg}{"⡀" * (5 * cls.column_size + (12 * hide_cores ))}{Mv.l(5 * cls.column_size + (12 * hide_cores ))}{THEME.gradient["cpu"][cpu.cpu_usage[n][-1]]}{Graphs.cores[n-1](None if cls.resized else cpu.cpu_usage[n][-1])}'
+			if cls.column_size > 0 or ct_width > 0:
+				out += f'{THEME.inactive_fg}{"⡀" * (5 * cls.column_size + ct_width)}{Mv.l(5 * cls.column_size + ct_width)}{THEME.gradient["cpu"][cpu.cpu_usage[n][-1]]}{Graphs.cores[n-1](None if cls.resized else cpu.cpu_usage[n][-1])}'
 			else:
 				out += f'{THEME.gradient["cpu"][cpu.cpu_usage[n][-1]]}'
 			out += f'{cpu.cpu_usage[n][-1]:>{3 if cls.column_size < 2 else 4}}{THEME.main_fg}%'
@@ -1766,7 +1767,7 @@ class CpuBox(Box, SubBox):
 					out += f'{THEME.gradient["temp"][100 if cpu.cpu_temp[n][-1] >= cpu.cpu_temp_crit else (cpu.cpu_temp[n][-1] * 100 // cpu.cpu_temp_crit)]}'
 				out += f'{cpu.cpu_temp[n][-1]:>4}{THEME.main_fg}°C'
 			elif cpu.got_sensors and not hide_cores:
-				out += f'{Mv.r(12)}'
+				out += f'{Mv.r(max(6, 6 * cls.column_size))}'
 			out += f'{THEME.div_line(Symbol.v_line)}'
 			cy += 1
 			if cy > ceil(THREADS/cls.box_columns) and n != THREADS:
@@ -2391,7 +2392,7 @@ class ProcBox(Box):
 		#* Detailed box draw
 		if proc.detailed:
 			if proc.details["status"] == psutil.STATUS_RUNNING: stat_color = Fx.b
-			elif proc.details["status"] in [psutil.STATUS_DEAD, psutil.STATUS_STOPPED, psutil.STATUS_ZOMBIE]: stat_color = THEME.inactive_fg
+			elif proc.details["status"] in [psutil.STATUS_DEAD, psutil.STATUS_STOPPED, psutil.STATUS_ZOMBIE]: stat_color = f'{THEME.inactive_fg}'
 			else: stat_color = ""
 			expand = proc.expand
 			iw = (dw - 3) // (4 + expand)
@@ -2582,7 +2583,7 @@ class Collector:
 		debugged: bool = False
 		try:
 			while not cls.stopping:
-				if CONFIG.draw_clock: Box.draw_clock()
+				if CONFIG.draw_clock and CONFIG.update_ms != 1000: Box.draw_clock()
 				cls.collect_run.wait(0.1)
 				if not cls.collect_run.is_set():
 					continue
@@ -2603,6 +2604,7 @@ class Collector:
 				if cls.draw_now and not Menu.active and not cls.collect_interrupt:
 					if cls.use_draw_list: Draw.out(*draw_buffers)
 					else: Draw.out()
+				if CONFIG.draw_clock and CONFIG.update_ms == 1000: Box.draw_clock()
 				cls.collect_idle.set()
 				cls.collect_done.set()
 		except Exception as e:
@@ -2719,41 +2721,46 @@ class CpuCollector(Collector):
 		core_dict: Dict[int, int] = {}
 		entry_int: int = 0
 		cpu_type: str = ""
+		c_max: int = 0
 		s_name: str = "_-_"
 		s_label: str = "_-_"
 		if cls.sensor_method == "psutil":
 			try:
+				if CONFIG.cpu_sensor != "Auto":
+					s_name, s_label = CONFIG.cpu_sensor.split(":", 1)
 				for name, entries in psutil.sensors_temperatures().items():
 					for num, entry in enumerate(entries, 1):
-						if CONFIG.cpu_sensor != "Auto":
-							s_name, s_label = CONFIG.cpu_sensor.split(":", 1)
-						if temp == 1000 and name == s_name and (entry.label == s_label or str(num) == s_label) and round(entry.current) > 0:
+						if name == s_name and (entry.label == s_label or str(num) == s_label) and round(entry.current) > 0:
 							if entry.label.startswith("Package"):
 								cpu_type = "intel"
 							elif entry.label.startswith("Tdie"):
 								cpu_type = "ryzen"
 							else:
 								cpu_type = "other"
-							if not cls.cpu_temp_high or cls.sensor_swap:
-								cls.sensor_swap = False
-								if getattr(entry, "high", None) != None and entry.high > 1: cls.cpu_temp_high = round(entry.high)
-								else: cls.cpu_temp_high = 80
-								if getattr(entry, "critical", None) != None and entry.critical > 1: cls.cpu_temp_crit = round(entry.critical)
-								else: cls.cpu_temp_crit = 95
+							if getattr(entry, "high", None) != None and entry.high > 1: cls.cpu_temp_high = round(entry.high)
+							else: cls.cpu_temp_high = 80
+							if getattr(entry, "critical", None) != None and entry.critical > 1: cls.cpu_temp_crit = round(entry.critical)
+							else: cls.cpu_temp_crit = 95
 							temp = round(entry.current)
-						elif temp == 1000 and entry.label.startswith(("Package", "Tdie")) and hasattr(entry, "current") and round(entry.current) > 0:
-							cpu_type = "intel" if entry.label.startswith("Package") else "ryzen"
-							if not cls.cpu_temp_high or cls.sensor_swap:
+						elif entry.label.startswith(("Package", "Tdie")) and cpu_type in ["", "other"] and s_name == "_-_" and hasattr(entry, "current") and round(entry.current) > 0:
+							if not cls.cpu_temp_high or cls.sensor_swap or cpu_type == "other":
 								cls.sensor_swap = False
 								if getattr(entry, "high", None) != None and entry.high > 1: cls.cpu_temp_high = round(entry.high)
 								else: cls.cpu_temp_high = 80
 								if getattr(entry, "critical", None) != None and entry.critical > 1: cls.cpu_temp_crit = round(entry.critical)
 								else: cls.cpu_temp_crit = 95
+							cpu_type = "intel" if entry.label.startswith("Package") else "ryzen"
 							temp = round(entry.current)
 						elif (entry.label.startswith(("Core", "Tccd", "CPU")) or (name.lower().startswith("cpu") and not entry.label)) and hasattr(entry, "current") and round(entry.current) > 0:
-							if (cpu_type == "intel" and entry.label.startswith("Core")) or (cpu_type == "ryzen" and entry.label.startswith("Tccd")):
+							if entry.label.startswith(("Core", "Tccd")):
 								entry_int = int(entry.label.replace("Core", "").replace("Tccd", ""))
-								if entry_int in core_dict:
+								if entry_int in core_dict and cpu_type != "ryzen":
+									if c_max == 0:
+										c_max = max(core_dict) + 1
+									if c_max < THREADS // 2 and (entry_int + c_max) not in core_dict:
+										core_dict[(entry_int + c_max)] = round(entry.current)
+									continue
+								elif entry_int in core_dict:
 									continue
 								core_dict[entry_int] = round(entry.current)
 								continue
@@ -2770,6 +2777,10 @@ class CpuCollector(Collector):
 								temp = round(entry.current)
 							cores.append(round(entry.current))
 				if core_dict:
+					if not temp or temp == 1000:
+						temp = sum(core_dict.values()) // len(core_dict)
+					if not cls.cpu_temp_high or not cls.cpu_temp_crit:
+						cls.cpu_temp_high, cls.cpu_temp_crit = 80, 95
 					cls.cpu_temp[0].append(temp)
 					if cpu_type == "ryzen":
 						ccds: int = len(core_dict)
@@ -2780,12 +2791,12 @@ class CpuCollector(Collector):
 								z = 1
 							if CORE_MAP[x] + 1 > cores_per_ccd * z:
 								z += 1
-							cls.cpu_temp[x+1].append(core_dict[z])
+							if z in core_dict:
+								cls.cpu_temp[x+1].append(core_dict[z])
 					else:
 						for x in range(THREADS):
-							if not CORE_MAP[x] in core_dict:
-								continue
-							cls.cpu_temp[x+1].append(core_dict[CORE_MAP[x]])
+							if CORE_MAP[x] in core_dict:
+								cls.cpu_temp[x+1].append(core_dict[CORE_MAP[x]])
 
 				elif len(cores) == THREADS / 2:
 					cls.cpu_temp[0].append(temp)
@@ -4168,7 +4179,7 @@ class Menu:
 						if selected == "net_auto": NetCollector.auto_min = CONFIG.net_auto
 						NetBox.redraw = True
 					if selected == "theme_background":
-						Term.bg = THEME.main_bg if CONFIG.theme_background else "\033[49m"
+						Term.bg = f'{THEME.main_bg}' if CONFIG.theme_background else "\033[49m"
 						Draw.now(Term.bg)
 					if selected == "show_battery":
 						Draw.clear("battery", saved=True)
