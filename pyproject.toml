@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "bpytop"
-version = "1.0.50"
+version = "1.0.61"
 description = "Resource monitor that shows usage and stats for processor, memory, disks, network and processes."
 readme = "README.md"
 authors = ["Aristocratos <jakob@qvantnet.com>"]
@@ -9,7 +9,7 @@ license = "Apache-2.0"
 include = ["bpytop-themes/*.theme"]
 
 [tool.poetry.dependencies]
-python = "^3.6"
+python = "^3.7"
 psutil = "^5.7.0"
 
 [tool.poetry.dev-dependencies]

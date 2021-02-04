@@ -1,5 +1,83 @@
 # Changelog
 
+## v1.0.61
+
+* Added: Vim keys (h, j, k, l) for browsing and moved help to shift+h
+* Changed: Size constraints now adapts to currently shown boxes
+
+## v1.0.60
+
+* Added: Ignore input unicode decode errors
+* Fixed: Wrong letter in "io" highlighted
+* Fixed: Crash on missing psutil.disk_usage
+* Added: Toggle for IO graphs in regular disk usage mode
+* Added: Toggle for uptime and uptime added as a option for the clock formatting
+* Added: Ability choose cpu graph attributes and split up upper and lower part
+* Added: Ability to toggle one big CPU graph instead of two combined graphs
+* Added: IP address to net box
+
+## v1.0.59
+
+* Fixed: Crash on missing disks
+* Fixed: IO stats text transparency
+
+## v1.0.58
+
+* Added: Disks io stat graphs and a dedicated io mode for disks box
+* Fixed: Better detection for disk io stats including multiple disks for OsX
+* Changed: Terminate, Kill, Interrupt shortcuts now only uses uppercase T, K, I
+* Changed: Process filtering changed to non case-sensitive, patch by @UmarJ
+	* Case-sensitive proc filtering using uppercase F
+* Changed: Get CPU load average from psutil module instead of os module, patch by @araczkowski
+* Fixed: Misc bugs
+
+## v1.0.57
+
+* Fixed: proc_sorting option counter not updating in menu, by @UmarJ
+* Added: Support for non truecolor terminals through 24-bit to 256-color conversion
+	* Activate by setting "truecolor" variable to False or starting with "-lc/--low-color" argument
+
+## v1.0.56
+
+* Fixed: units_to_bytes returning 0 if input value <10 and in bits
+* Added: Testing for some functions and classes
+* Added: net_iface variable to set startup network interface, by @raTmole
+* Added: use_fstab variable to get the disk list from /etc/fstab, by @BrHal
+* Added: Categories in Options menu and only_physical option for disks
+
+## v1.0.55
+
+* Fixed: Disks usage and free meters not updating unless resized
+* Changed: All boxes are now toggeable with key 1-4, start argument -b/--boxes and config variable shown_boxes.
+* Changed: Moved testing from Travis CI to Github workflow
+
+## v1.0.54
+
+* Fixed: Added nullfs filesystem to auto exclude from disks list
+* Fixed: Process box not updating on window resize
+
+## v1.0.53
+
+* Added: Process update multiplier (only update processes every X times) to reduce cpu usage (set to 2 by default)
+* Changed: Patch for faster loading of config file, by @rohithill
+* Added: Network interface list now updates automatically, by @UmarJ
+* Notice: Bumped minimum python version to 3.7 because of unicode issues in 3.6
+* Added: pylint disable=unsubscriptable-object because of python 3.9 issue
+* Changed: Default theme now has a black background
+* Fixed: Crash if bpytop.conf exists but don't have update_ms variable set
+
+## v1.0.52
+
+* Fixed: Removed "/sys/class/power_supply" check for FreeBSD and OsX
+
+## v1.0.51
+
+* Fixed: Text argument in subprocess not working on python 3.6
+* Changed: Disks filtering now uses full mountpoint path for better accuracy
+* Fixed: Disable battery detection if /sys/class/power_supply is missing to avoid exception is psutil
+* Fixed: Catch faulty temperature readings instead of crashing
+* Changed: psutil update to 5.8.0 in pypi package (fixes errors on apple silicon cpus)
+
 ## v1.0.50
 
 * Fixed: Correction for missing coretemp values
