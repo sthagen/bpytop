@@ -3,7 +3,7 @@
 # indent = tab
 # tab-size = 4
 
-# Copyright 2020 Aristocratos (jakob@qvantnet.com)
+# Copyright 2021 Aristocratos (jakob@qvantnet.com)
 
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 
 import os, sys, io, threading, signal, re, subprocess, logging, logging.handlers, argparse
 import urllib.request
-from time import time, sleep, strftime, localtime
+from time import time, sleep, strftime, tzset
 from datetime import timedelta
 from _thread import interrupt_main
 from collections import defaultdict
@@ -29,7 +29,7 @@ from string import Template
 from math import ceil, floor
 from random import randint
 from shutil import which
-from typing import List, Set, Dict, Tuple, Optional, Union, Any, Callable, ContextManager, Iterable, Type, NamedTuple
+from typing import List, Dict, Tuple, Union, Any, Iterable
 
 errors: List[str] = []
 try: import fcntl, termios, tty, pwd
@@ -55,7 +55,7 @@ if errors:
 		print("\nInstall required modules!\n")
 	raise SystemExit(1)
 
-VERSION: str = "1.0.63"
+VERSION: str = "1.0.67"
 
 #? Argument parser ------------------------------------------------------------------------------->
 args = argparse.ArgumentParser()
@@ -98,7 +98,7 @@ theme_background=$theme_background
 #* Sets if 24-bit truecolor should be used, will convert 24-bit colors to 256 color (6x6x6 color cube) if false.
 truecolor=$truecolor
 
-#* Manually set which boxes to show. Available values are "cpu mem net proc", seperate values with whitespace.
+#* Manually set which boxes to show. Available values are "cpu mem net proc", separate values with whitespace.
 shown_boxes="$shown_boxes"
 
 #* Update time in milliseconds, increases automatically if set below internal loops processing time, recommended 2000 ms or above for better sample times for graphs.
@@ -164,6 +164,9 @@ show_coretemp=$show_coretemp
 #* Which temperature scale to use, available values: "celsius", "fahrenheit", "kelvin" and "rankine"
 temp_scale="$temp_scale"
 
+#* Show CPU frequency, can cause slowdowns on certain systems with some versions of psutil
+show_cpu_freq=$show_cpu_freq
+
 #* Draw a clock at top of screen, formatting according to strftime, empty string to disable.
 draw_clock="$draw_clock"
 
@@ -174,7 +177,7 @@ background_update=$background_update
 custom_cpu_name="$custom_cpu_name"
 
 #* Optional filter for shown disks, should be full path of a mountpoint, separate multiple values with a comma ",".
-#* Begin line with "exclude=" to change to exclude filter, oterwise defaults to "most include" filter. Example: disks_filter="exclude=/boot, /home/user"
+#* Begin line with "exclude=" to change to exclude filter, otherwise defaults to "most include" filter. Example: disks_filter="exclude=/boot, /home/user"
 disks_filter="$disks_filter"
 
 #* Show graphs instead of meters for memory values.
@@ -204,7 +207,7 @@ io_mode=$io_mode
 #* Set to True to show combined read/write io graphs in io mode.
 io_graph_combined=$io_graph_combined
 
-#* Set the top speed for the io graphs in MiB/s (10 by default), use format "device:speed" seperate disks with a comma ",".
+#* Set the top speed for the io graphs in MiB/s (10 by default), use format "device:speed" separate disks with a comma ",".
 #* Example: "/dev/sda:100, /dev/sdb:20"
 io_graph_speeds="$io_graph_speeds"
 
@@ -218,7 +221,7 @@ net_auto=$net_auto
 #* Sync the scaling for download and upload to whichever currently has the highest scale
 net_sync=$net_sync
 
-#* If the network graphs color gradient should scale to bandwith usage or auto scale, bandwith usage is based on "net_download" and "net_upload" values
+#* If the network graphs color gradient should scale to bandwidth usage or auto scale, bandwidth usage is based on "net_download" and "net_upload" values
 net_color_fixed=$net_color_fixed
 
 #* Starts with the Network Interface specified here.
@@ -251,6 +254,8 @@ THEME_DIR: str = ""
 
 if os.path.isdir(f'{os.path.dirname(__file__)}/bpytop-themes'):
 	THEME_DIR = f'{os.path.dirname(__file__)}/bpytop-themes'
+elif os.path.isdir(f'{os.path.dirname(__file__)}/themes'):
+	THEME_DIR = f'{os.path.dirname(__file__)}/themes'
 else:
 	for td in ["/usr/local/", "/usr/", "/snap/bpytop/current/usr/"]:
 		if os.path.isdir(f'{td}share/bpytop/themes'):
@@ -408,7 +413,7 @@ class Config:
 						"swap_disk", "show_disks", "use_fstab", "net_download", "net_upload", "net_auto", "net_color_fixed", "show_init", "theme_background",
 						"net_sync", "show_battery", "tree_depth", "cpu_sensor", "show_coretemp", "proc_update_mult", "shown_boxes", "net_iface", "only_physical",
 						"truecolor", "io_mode", "io_graph_combined", "io_graph_speeds", "show_io_stat", "cpu_graph_upper", "cpu_graph_lower", "cpu_invert_lower",
-						"cpu_single_graph", "show_uptime", "temp_scale"]
+						"cpu_single_graph", "show_uptime", "temp_scale", "show_cpu_freq"]
 	conf_dict: Dict[str, Union[str, int, bool]] = {}
 	color_theme: str = "Default"
 	theme_background: bool = True
@@ -433,6 +438,7 @@ class Config:
 	cpu_sensor: str = "Auto"
 	show_coretemp: bool = True
 	temp_scale: str = "celsius"
+	show_cpu_freq: bool = True
 	draw_clock: str = "%X"
 	background_update: bool = True
 	custom_cpu_name: str = ""
@@ -455,7 +461,7 @@ class Config:
 	net_sync: bool = False
 	net_iface: str = ""
 	show_battery: bool = True
-	show_init: bool = True
+	show_init: bool = False
 	log_level: str = "WARNING"
 
 	warnings: List[str] = []
@@ -516,7 +522,9 @@ class Config:
 		conf_file: str = ""
 		if os.path.isfile(self.config_file):
 			conf_file = self.config_file
-		elif os.path.isfile("/etc/bpytop.conf"):
+		elif SYSTEM == "BSD" and os.path.isfile("/usr/local/etc/bpytop.conf"):
+			conf_file = "/usr/local/etc/bpytop.conf"
+		elif SYSTEM != "BSD" and os.path.isfile("/etc/bpytop.conf"):
 			conf_file = "/etc/bpytop.conf"
 		else:
 			return new_config
@@ -691,6 +699,8 @@ class Term:
 						f'{Colors.default}Height: {Colors.red if cls._h < cls.min_height else Colors.green}{cls._h}{Term.bg}{Term.fg}',
 						f'{Mv.d(1)}{Mv.l(25)}{Colors.default}{Colors.black_bg}Current config need: {cls.min_width} x {cls.min_height}{Fx.ub}{Term.bg}{Term.fg}')
 					cls.winch.wait(0.3)
+					while Key.has_key():
+						if Key.last() == "q": clean_quit()
 					cls.winch.clear()
 					cls._w, cls._h = os.get_terminal_size()
 			else:
@@ -1133,9 +1143,9 @@ class Color:
 				else:
 					raise ValueError(f'RGB dec should be "0-255 0-255 0-255"')
 
-			ct = self.dec[0] + self.dec[1] + self.dec[2]
-			if ct > 255*3 or ct < 0:
-				raise ValueError(f'RGB values out of range: {color}')
+			if not all(0 <= c <= 255 for c in self.dec):
+				raise ValueError(f'One or more RGB values are out of range: {color}')
+
 		except Exception as e:
 			errlog.exception(str(e))
 			self.escape = ""
@@ -1654,6 +1664,7 @@ class Box:
 	_b_mem_h: int
 	redraw_all: bool
 	buffers: List[str] = []
+	c_counter: int = 0
 	clock_on: bool = False
 	clock: str = ""
 	clock_len: int = 0
@@ -1693,6 +1704,10 @@ class Box:
 	@classmethod
 	def draw_clock(cls, force: bool = False):
 		if not "cpu" in cls.boxes or not cls.clock_on: return
+		cls.c_counter += 1
+		if cls.c_counter > 3600 / (Config.update_ms / 1000):
+			tzset()
+			cls.c_counter = 0
 		out: str = ""
 		if force: pass
 		elif Term.resized or strftime(CONFIG.draw_clock) == cls.clock: return
@@ -2350,21 +2365,20 @@ class NetBox(Box, SubBox):
 
 		if cls.resized or cls.redraw:
 			out_misc += cls._draw_bg()
-			if not "b" in Key.mouse:
-				Key.mouse["b"] = [[x+w - len(net.nic[:10]) - 9 + i, y-1] for i in range(4)]
-				Key.mouse["n"] = [[x+w - 5 + i, y-1] for i in range(4)]
-				Key.mouse["z"] = [[x+w - len(net.nic[:10]) - 14 + i, y-1] for i in range(4)]
+			Key.mouse["b"] = [[x+w - len(net.nic[:10]) - 9 + i, y-1] for i in range(4)]
+			Key.mouse["n"] = [[x+w - 5 + i, y-1] for i in range(4)]
+			Key.mouse["z"] = [[x+w - len(net.nic[:10]) - 14 + i, y-1] for i in range(4)]
 
 
 			out_misc += (f'{Mv.to(y-1, x+w - 25)}{THEME.net_box}{Symbol.h_line * (10 - len(net.nic[:10]))}{Symbol.title_left}{Fx.b if reset else ""}{THEME.hi_fg("z")}{THEME.title("ero")}'
 				f'{Fx.ub}{THEME.net_box(Symbol.title_right)}{Term.fg}'
 				f'{THEME.net_box}{Symbol.title_left}{Fx.b}{THEME.hi_fg("<b")} {THEME.title(net.nic[:10])} {THEME.hi_fg("n>")}{Fx.ub}{THEME.net_box(Symbol.title_right)}{Term.fg}')
 			if w - len(net.nic[:10]) - 20 > 6:
-				if not "a" in Key.mouse: Key.mouse["a"] = [[x+w - 20 - len(net.nic[:10]) + i, y-1] for i in range(4)]
+				Key.mouse["a"] = [[x+w - 20 - len(net.nic[:10]) + i, y-1] for i in range(4)]
 				out_misc += (f'{Mv.to(y-1, x+w - 21 - len(net.nic[:10]))}{THEME.net_box(Symbol.title_left)}{Fx.b if net.auto_min else ""}{THEME.hi_fg("a")}{THEME.title("uto")}'
 				f'{Fx.ub}{THEME.net_box(Symbol.title_right)}{Term.fg}')
 			if w - len(net.nic[:10]) - 20 > 13:
-				if not "y" in Key.mouse: Key.mouse["y"] = [[x+w - 26 - len(net.nic[:10]) + i, y-1] for i in range(4)]
+				Key.mouse["y"] = [[x+w - 26 - len(net.nic[:10]) + i, y-1] for i in range(4)]
 				out_misc += (f'{Mv.to(y-1, x+w - 27 - len(net.nic[:10]))}{THEME.net_box(Symbol.title_left)}{Fx.b if CONFIG.net_sync else ""}{THEME.title("s")}{THEME.hi_fg("y")}{THEME.title("nc")}'
 				f'{Fx.ub}{THEME.net_box(Symbol.title_right)}{Term.fg}')
 			if net.address and w - len(net.nic[:10]) - len(net.address) - 20 > 15:
@@ -2852,7 +2866,7 @@ class ProcBox(Box):
 		#* Clean up dead processes graphs and counters
 		cls.count += 1
 		if cls.count == 100:
-			cls.count == 0
+			cls.count = 0
 			for p in list(cls.pid_counter):
 				if not psutil.pid_exists(p):
 					del cls.pid_counter[p], Graphs.pid_cpu[p]
@@ -3043,8 +3057,11 @@ class CpuCollector(Collector):
 			if len(cls.cpu_usage[n]) > Term.width * 2:
 				del cls.cpu_usage[n][0]
 		try:
-			if hasattr(psutil.cpu_freq(), "current"):
-				cls.cpu_freq = round(psutil.cpu_freq().current)
+			if CONFIG.show_cpu_freq and hasattr(psutil.cpu_freq(), "current"):
+				freq: float = psutil.cpu_freq().current
+				cls.cpu_freq = round(freq * (1 if freq > 10 else 1000))
+			elif cls.cpu_freq > 0:
+				cls.cpu_freq = 0
 		except Exception as e:
 			if not cls.freq_error:
 				cls.freq_error = True
@@ -3545,6 +3562,7 @@ class NetCollector(Collector):
 		if not cls.nic or cls.nic not in up_stat:
 			cls._get_nics()
 			if not cls.nic: return
+			NetBox.redraw = True
 		try:
 			io_all = psutil.net_io_counters(pernic=True)[cls.nic]
 		except KeyError:
@@ -3722,7 +3740,7 @@ class ProcCollector(Collector):
 
 				out[p.info["pid"]] = {
 					"name" : p.info["name"],
-					"cmd" : cmd.replace("\n", "").replace("\t", "").replace("\\", ""),
+					"cmd" : cmd,
 					"threads" : p.info["num_threads"],
 					"username" : p.info["username"],
 					"mem" : mem,
@@ -3906,7 +3924,7 @@ class ProcCollector(Collector):
 					out[pid] = {
 						"indent" : inindent,
 						"name": name,
-						"cmd" : cmd.replace("\n", "").replace("\t", "").replace("\\", ""),
+						"cmd" : cmd,
 						"threads" : threads,
 						"username" : username,
 						"mem" : mem,
@@ -4392,6 +4410,11 @@ class Menu:
 					'',
 					'Rankine, 0 = abosulte zero, 1 degree change',
 					'equals 1 degree change in Fahrenheit.'],
+				"show_cpu_freq" : [
+					'Show CPU frequency',
+					'',
+					'Can cause slowdowns on systems with many',
+					'cores and psutil versions below 5.8.1'],
 				"custom_cpu_name" : [
 					'Custom cpu model name in cpu percentage box.',
 					'',
@@ -4563,7 +4586,7 @@ class Menu:
 				"tree_depth" : [
 					'Process tree auto collapse depth.',
 					'',
-					'Sets the depth were the tree view will auto',
+					'Sets the depth where the tree view will auto',
 					'collapse processes at.'],
 				"proc_colors" : [
 					'Enable colors in process view.',
@@ -4959,7 +4982,11 @@ class Timer:
 
 	@classmethod
 	def left(cls) -> float:
-		return cls.timestamp + (CONFIG.update_ms / 1000) - time()
+		t_left: float = cls.timestamp + (CONFIG.update_ms / 1000) - time()
+		if t_left > CONFIG.update_ms / 1000:
+			cls.stamp()
+			return CONFIG.update_ms / 1000
+		return t_left
 
 	@classmethod
 	def finish(cls):
@@ -5320,7 +5347,7 @@ def temperature(value: int, scale: str = "celsius") -> Tuple[int, str]:
 	elif scale == "fahrenheit":
 		return (round(value * 1.8 + 32), "°F")
 	elif scale == "kelvin":
-		return (round(value + 273.15), "°K")
+		return (round(value + 273.15), "K ")
 	elif scale == "rankine":
 		return (round(value * 1.8 + 491.67), "°R")
 	else:

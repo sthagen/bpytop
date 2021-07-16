@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.0.67
+
+* Fixed: Removed not needed escape character replacements
+* Fixed: Themes missing when installing with pip3
+* Fixed: Color in-range check, by @GerbenWelter
+
+## v1.0.66
+
+* Fixed: Program not stalling when system time is changed and regular update of current timezone
+* Fixed: NetBox not redrawing when network interface is removed, by @UmarJ
+* Fixed: Some typos
+
+## v1.0.65
+
+* Fixed: Removed degrees symbol from Kelvin scale, by @jrbergen
+* Fixed: Mouse buttons not working in netbox when changing interface
+* Fixed: q key not working when terminal size warning is showed
+* Fixed: Cleanup of unused libraries and other small fixes
+
+## v1.0.64
+
+* Changed: Init screen not shown by default
+* Fixed: Broken cleanup in ProcBox class
+* Fixed: cpu frequency type change in psutil 5.8.1
+* Added: Option to toggle CPU frequency
+* Fixed: Check for config in /usr/local/etc instead of /etc on BSD
+
 ## v1.0.63
 
 * Added: Options for choosing temperature scale and readded support for negative celsius temps
